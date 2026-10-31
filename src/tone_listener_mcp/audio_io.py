@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import math
 import os
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+from scipy.signal import resample_poly
 
 
 @dataclass(frozen=True)
@@ -67,3 +71,16 @@ def load_audio(path: str, start: float | None = None, end: float | None = None) 
     if samples.shape[1] == 0 or not np.isfinite(samples).all():
         raise ValueError("Audio must contain finite samples and at least one frame")
     return AudioClip(samples, rate, str(source), first / rate)
+
+
+@contextmanager
+def upload_wav(clip: AudioClip) -> Iterator[Path]:
+    """Yield a temporary 16 kHz mono WAV and remove it even if upload fails."""
+    mono = np.mean(clip.samples.astype(np.float64), axis=0)
+    divisor = math.gcd(clip.sample_rate, 16000)
+    converted = resample_poly(mono, 16000 // divisor, clip.sample_rate // divisor)
+    with tempfile.TemporaryDirectory(prefix="tone-listener-") as directory:
+        path = Path(directory) / "clip.wav"
+        # FLOAT avoids hard clipping after loudness matching.
+        sf.write(path, converted, 16000, subtype="FLOAT")
+        yield path
