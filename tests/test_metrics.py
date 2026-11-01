@@ -1,0 +1,38 @@
+import json
+
+import numpy as np
+import pytest
+
+from tone_listener_mcp.audio_io import AudioClip
+from tone_listener_mcp.metrics import measure
+
+
+def sine(rate=48000, frequency=1000):
+    return 0.5 * np.sin(2 * np.pi * frequency * np.arange(rate) / rate)
+
+
+def clip(samples, rate=48000):
+    return AudioClip(np.atleast_2d(samples).astype(np.float32), rate, "synthetic")
+
+
+def test_sine_levels():
+    result = measure(clip(sine()))["level"]
+    assert result["peak_dbfs"] == pytest.approx(-6.0206, abs=0.01)
+    assert result["rms_dbfs"] == pytest.approx(-9.0309, abs=0.01)
+    assert result["crest_factor_db"] == pytest.approx(3.0103, abs=0.01)
+    assert result["short_term_rms_range_db"] == pytest.approx(0, abs=0.001)
+
+
+def test_silence_is_valid_json():
+    result = measure(clip(np.zeros(48000)))
+    assert result["level"]["rms_dbfs"] is None
+    assert result["level"]["crest_factor_db"] is None
+    assert result["level"]["silent_window_fraction"] == 1
+    json.dumps(result, allow_nan=False)
+
+
+def test_dynamics():
+    samples = sine()
+    samples[:24000] *= 0.1
+    result = measure(clip(samples))["level"]
+    assert result["short_term_rms_range_db"] == pytest.approx(20, abs=0.01)
