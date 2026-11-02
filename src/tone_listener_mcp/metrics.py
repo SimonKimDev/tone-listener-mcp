@@ -83,9 +83,27 @@ def spectrum_metrics(clip: AudioClip) -> dict:
     }
 
 
+def stereo_metrics(clip: AudioClip) -> dict | None:
+    if clip.samples.shape[0] != 2:
+        return None
+    left, right = clip.samples.astype(np.float64)
+    mid = (left + right) / 2
+    side = (left - right) / 2
+    mid_power = float(np.mean(mid**2))
+    side_power = float(np.mean(side**2))
+    variable = np.std(left) > 0 and np.std(right) > 0
+    return {
+        "lr_correlation": float(np.corrcoef(left, right)[0, 1]) if variable else None,
+        "side_mid_energy_ratio_db": power_db(side_power / mid_power) if mid_power else None,
+        "mid_rms_dbfs": power_db(mid_power),
+        "side_rms_dbfs": power_db(side_power),
+    }
+
+
 def measure(clip: AudioClip) -> dict:
     return {
         "clip": clip.metadata(),
         "level": level_metrics(clip),
         "spectrum": spectrum_metrics(clip),
+        "stereo": stereo_metrics(clip),
     }

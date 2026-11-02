@@ -59,3 +59,15 @@ def test_low_rate_and_single_sample():
     assert not result["spectrum"]["bands"]["above_8000"]["available"]
     assert result["spectrum"]["bands"]["above_8000"]["relative_db"] is None
     json.dumps(result, allow_nan=False)
+
+
+def test_stereo_and_antiphase():
+    tone = sine()
+    duplicated = measure(clip(np.stack((tone, tone))))
+    assert duplicated["stereo"]["lr_correlation"] == pytest.approx(1)
+    assert duplicated["stereo"]["side_mid_energy_ratio_db"] is None
+    antiphase = measure(clip(np.stack((tone, -tone))))
+    assert antiphase["stereo"]["lr_correlation"] == pytest.approx(-1)
+    assert antiphase["spectrum"]["centroid_hz"] == pytest.approx(1000, abs=2)
+    assert measure(clip(tone))["stereo"] is None
+    json.dumps(antiphase, allow_nan=False)
