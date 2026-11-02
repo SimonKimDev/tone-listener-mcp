@@ -36,3 +36,26 @@ def test_dynamics():
     samples[:24000] *= 0.1
     result = measure(clip(samples))["level"]
     assert result["short_term_rms_range_db"] == pytest.approx(20, abs=0.01)
+
+
+def test_sine_spectrum():
+    result = measure(clip(sine()))["spectrum"]
+    assert result["centroid_hz"] == pytest.approx(1000, abs=2)
+    assert result["rolloff_85_hz"] == pytest.approx(1000, abs=15)
+    assert result["bands"]["800_2000"]["relative_db"] == pytest.approx(0, abs=0.01)
+    assert result["bands"]["2000_5000"]["relative_db"] < -60
+
+
+def test_white_noise_is_flatter():
+    rng = np.random.default_rng(42)
+    noise = measure(clip(rng.normal(0, 0.1, 48000)))["spectrum"]
+    tone = measure(clip(sine()))["spectrum"]
+    assert noise["flatness"] > 0.8
+    assert noise["flatness"] > tone["flatness"]
+
+
+def test_low_rate_and_single_sample():
+    result = measure(clip(np.ones(1) * 0.1, rate=8000))
+    assert not result["spectrum"]["bands"]["above_8000"]["available"]
+    assert result["spectrum"]["bands"]["above_8000"]["relative_db"] is None
+    json.dumps(result, allow_nan=False)
