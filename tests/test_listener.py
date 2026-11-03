@@ -90,3 +90,24 @@ def test_cleanup_failure_is_explicit(client, audio):
     result = listen(audio)
     assert result["listening"] is not None
     assert result["cleanup_warnings"]
+
+
+def test_client_initialization_failure(monkeypatch, audio):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    constructor = MagicMock(side_effect=ValueError("invalid client configuration"))
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", constructor)
+    assert listen(audio)["listening_unavailable"] is not None
+
+
+def test_analyze_metrics_without_key(tmp_path, monkeypatch):
+    import soundfile as sf
+
+    from tone_listener_mcp.server import analyze_audio
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    path = tmp_path / "tone.wav"
+    sf.write(path, np.ones(16000) * 0.1, 16000)
+    result = analyze_audio(str(path), end=0.5)
+    assert result["metrics"]["clip"]["duration_seconds"] == 0.5
+    assert result["metrics"]["level"]["rms_dbfs"] is not None
+    assert result["listening_unavailable"]

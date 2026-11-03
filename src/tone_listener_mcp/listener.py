@@ -63,6 +63,12 @@ class ListeningResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+def _failure_reason(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    reason = f"Gemini listening failed ({type(exc).__name__}"
+    return reason + (f", status {code})" if isinstance(code, int) else ")")
+
+
 def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> dict:
     model = os.environ.get("TONE_LISTENER_MODEL", DEFAULT_MODEL)
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -76,7 +82,15 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
         result["listening_unavailable"] = "GEMINI_API_KEY is not set; local metrics only"
         return result
     failure_types = (errors.APIError, httpx.HTTPError, OSError, ValueError, TimeoutError)
-    with genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=60000)) as client:
+    try:
+        client_instance = genai.Client(
+            api_key=api_key, http_options=types.HttpOptions(timeout=60000)
+        )
+    except failure_types as exc:
+        result["listening_unavailable"] = _failure_reason(exc)
+        logger.warning("%s", result["listening_unavailable"])
+        return result
+    with client_instance as client:
         names: list[str] = []
         try:
             contents: list = [LISTENING_INSTRUCTIONS, prompt]
@@ -119,9 +133,7 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
             result["listening"] = parsed.model_dump(mode="json")
         except failure_types as exc:
             # Do not echo SDK messages: they may contain request URLs or credentials.
-            code = getattr(exc, "code", None)
-            reason = f"Gemini listening failed ({type(exc).__name__}"
-            reason += f", status {code})" if isinstance(code, int) else ")"
+            reason = _failure_reason(exc)
             logger.warning("%s", reason)
             result["listening_unavailable"] = reason
         finally:

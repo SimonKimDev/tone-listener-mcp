@@ -6,6 +6,7 @@ from mcp.server.mcpserver import MCPServer
 
 from tone_listener_mcp import __version__
 from tone_listener_mcp.audio_io import load_audio
+from tone_listener_mcp.listener import listen
 from tone_listener_mcp.metrics import measure
 
 mcp = MCPServer(
@@ -25,6 +26,18 @@ def server_info() -> dict:
 def audio_metrics(path: str, start: float | None = None, end: float | None = None) -> dict:
     """Measure local audio levels, spectrum and stereo. Times are seconds; end is exclusive."""
     return measure(load_audio(path, start, end))
+
+
+@mcp.tool()
+def analyze_audio(
+    path: str,
+    start: float | None = None,
+    end: float | None = None,
+    question: str | None = None,
+) -> dict:
+    """Measure a clip and optionally upload it to Gemini for guitar listening."""
+    clip = load_audio(path, start, end)
+    return {"metrics": measure(clip), **listen(clip, question)}
 
 
 def main() -> None:
