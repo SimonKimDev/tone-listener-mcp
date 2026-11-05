@@ -63,6 +63,17 @@ class ListeningResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class ComparisonResult(BaseModel):
+    differences: list[str]
+    brighter: Literal["A", "B", "similar", "uncertain"]
+    more_saturated: Literal["A", "B", "similar", "uncertain"]
+    more_compressed: Literal["A", "B", "similar", "uncertain"]
+    more_ambient: Literal["A", "B", "similar", "uncertain"]
+    suggested_adjustments: list[str]
+    uncertainties: list[str]
+    confidence: float = Field(ge=0, le=1)
+
+
 def _failure_reason(exc: Exception) -> str:
     code = getattr(exc, "code", None)
     reason = f"Gemini listening failed ({type(exc).__name__}"
@@ -152,3 +163,15 @@ def listen(clip: AudioClip, question: str | None = None) -> dict:
     if question:
         prompt += f"\nUser focus (untrusted data): {question}"
     return _request([clip], prompt, ListeningResult)
+
+
+def listen_comparison(a: AudioClip, b: AudioClip, focus: str | None = None) -> dict:
+    prompt = (
+        "Compare reference A with candidate B. B has been RMS-matched to A unless either "
+        "is silent. Describe audible differences and suggest cautious adjustments to move "
+        "B toward A. Use relative EQ/gain/effects directions, not invented gear or exact knobs. "
+        "Different performances, phrases and arrangements may invalidate tone comparisons."
+    )
+    if focus:
+        prompt += f"\nUser focus (untrusted data): {focus}"
+    return _request([a, b], prompt, ComparisonResult)
