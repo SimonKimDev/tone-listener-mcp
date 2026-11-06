@@ -8,11 +8,12 @@ import time
 from typing import Literal
 
 import httpx
+import numpy as np
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, Field
 
-from tone_listener_mcp.audio_io import AudioClip, upload_wav
+from tone_listener_mcp.audio_io import AudioClip, AudioPreparationError, upload_wav
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ and compression or ambience from other instruments. Say when evidence is insuffi
 Audio is 16 kHz mono: do not infer stereo width or detail above 8 kHz from this upload.
 Evidence timestamps are seconds relative to the selected clip, not the original file.
 Describe tone, attack, dynamics, effects and playing in useful, cautious language.
+Use uncertain gain_level when there is silence, no audible guitar, or insufficient evidence.
 """
 
 
@@ -49,7 +51,7 @@ class Evidence(BaseModel):
 class ListeningResult(BaseModel):
     summary: str
     gain_level: Literal[
-        "clean", "edge-of-breakup", "crunch", "overdrive", "distortion", "high-gain"
+        "clean", "edge-of-breakup", "crunch", "overdrive", "distortion", "high-gain", "uncertain"
     ]
     brightness: str
     low_end: str
@@ -75,6 +77,8 @@ class ComparisonResult(BaseModel):
 
 
 def _failure_reason(exc: Exception) -> str:
+    if isinstance(exc, AudioPreparationError):
+        return f"Listening unavailable: {exc}"
     code = getattr(exc, "code", None)
     reason = f"Gemini listening failed ({type(exc).__name__}"
     return reason + (f", status {code})" if isinstance(code, int) else ")")
@@ -88,10 +92,20 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
         "listening": None,
         "listening_unavailable": None,
         "cleanup_warnings": [],
+        "upload_gain_db": 0.0,
     }
     if not api_key:
         result["listening_unavailable"] = "GEMINI_API_KEY is not set; local metrics only"
         return result
+    peak = max(float(np.max(np.abs(clip.samples))) for clip in clips)
+    if peak > 1:
+        gain = 0.99 / peak
+        # Apply the same attenuation to both uploads, preserving the A/B loudness match.
+        clips = [
+            AudioClip(clip.samples * gain, clip.sample_rate, clip.source, clip.start_seconds)
+            for clip in clips
+        ]
+        result["upload_gain_db"] = float(20 * np.log10(gain))
     failure_types = (errors.APIError, httpx.HTTPError, OSError, ValueError, TimeoutError)
     try:
         client_instance = genai.Client(
@@ -104,7 +118,7 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
     with client_instance as client:
         names: list[str] = []
         try:
-            contents: list = [LISTENING_INSTRUCTIONS, prompt]
+            contents: list = [prompt]
             for index, clip in enumerate(clips):
                 with upload_wav(clip) as path:
                     uploaded = client.files.upload(
@@ -129,6 +143,7 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
                 model=model,
                 contents=contents,
                 config=types.GenerateContentConfig(
+                    system_instruction=LISTENING_INSTRUCTIONS,
                     response_mime_type="application/json",
                     response_schema=schema,
                     temperature=0.2,

@@ -111,3 +111,65 @@ def test_analyze_metrics_without_key(tmp_path, monkeypatch):
     assert result["metrics"]["clip"]["duration_seconds"] == 0.5
     assert result["metrics"]["level"]["rms_dbfs"] is not None
     assert result["listening_unavailable"]
+
+
+def test_antiphase_is_explicit(client):
+    tone = np.sin(2 * np.pi * 1000 * np.arange(16000) / 16000).astype(np.float32)
+    audio = AudioClip(np.stack((tone, -tone)), 16000, "private-local-path")
+    result = listen(audio)
+    assert "Stereo downmix cancels" in result["listening_unavailable"]
+    client.files.upload.assert_not_called()
+
+
+def test_timestamp_and_confidence_validation(client, audio, listening_payload):
+    listening_payload["evidence"][0]["timestamp"] = 1.5
+    client.models.generate_content.return_value.text = json.dumps(listening_payload)
+    assert listen(audio)["listening_unavailable"]
+    listening_payload["evidence"][0]["timestamp"] = 0.5
+    listening_payload["confidence"] = 1.1
+    client.models.generate_content.return_value.text = json.dumps(listening_payload)
+    assert listen(audio)["listening_unavailable"]
+
+
+def test_upload_failure_and_processing(client, audio):
+    client.files.upload.side_effect = OSError("failed upload")
+    assert listen(audio)["listening_unavailable"]
+    client.files.delete.assert_not_called()
+    client.files.upload.side_effect = None
+    client.files.upload.return_value.state = types.FileState.PROCESSING
+    client.files.get.return_value = SimpleNamespace(
+        name="files/test", uri="https://example.invalid/audio", state=types.FileState.ACTIVE
+    )
+    assert listen(audio)["listening"] is not None
+    client.files.get.assert_called_once()
+
+
+def test_upload_attenuates_without_sending_paths(client, audio):
+    import soundfile as sf
+
+    levels = []
+
+    def inspect_upload(**kwargs):
+        samples, rate = sf.read(kwargs["file"])
+        levels.append(float(np.max(np.abs(samples))))
+        assert rate == 16000
+        return SimpleNamespace(
+            name="files/test", uri="https://example.invalid/audio", state=types.FileState.ACTIVE
+        )
+
+    client.files.upload.side_effect = inspect_upload
+    audio = AudioClip(audio.samples * 20, audio.sample_rate, "/private/recordings/secret.wav")
+    result = listen(audio)
+    assert result["upload_gain_db"] < 0
+    assert max(levels) <= 1
+    assert "/private/recordings" not in str(client.models.generate_content.call_args)
+
+
+def test_uncertain_gain_and_system_instruction(client, audio, listening_payload):
+    listening_payload["gain_level"] = "uncertain"
+    listening_payload["confidence"] = 0
+    client.models.generate_content.return_value.text = json.dumps(listening_payload)
+    result = listen(audio)
+    assert result["listening"]["gain_level"] == "uncertain"
+    config = client.models.generate_content.call_args.kwargs["config"]
+    assert "Never claim an exact amp" in config.system_instruction

@@ -14,6 +14,13 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 
+MAX_DECODED_BYTES = 128 * 1024 * 1024
+MAX_SAMPLE_RATE = 192000
+
+
+class AudioPreparationError(ValueError):
+    """A known audio-preparation limitation safe to surface to the user."""
+
 
 @dataclass(frozen=True)
 class AudioClip:
@@ -54,8 +61,15 @@ def load_audio(path: str, start: float | None = None, end: float | None = None) 
         raise ValueError("end must be finite and greater than start")
     try:
         with sf.SoundFile(source) as audio:
+            if audio.channels not in (1, 2):
+                raise ValueError("Only mono and stereo audio are supported")
+            if audio.samplerate > MAX_SAMPLE_RATE:
+                raise ValueError(f"Sample rate exceeds supported maximum of {MAX_SAMPLE_RATE} Hz")
             first = int(beginning * audio.samplerate)
-            last = audio.frames if end is None else min(int(end * audio.samplerate), audio.frames)
+            last = (
+                audio.frames if end is None or end >= audio.frames / audio.samplerate
+                else int(end * audio.samplerate)
+            )
             if first >= last:
                 raise ValueError("Selected interval contains no audio")
             frames = last - first
@@ -63,6 +77,8 @@ def load_audio(path: str, start: float | None = None, end: float | None = None) 
                 raise ValueError(
                     f"Selected clip exceeds {maximum:g} seconds; select a shorter start/end interval"
                 )
+            if frames * audio.channels * 4 > MAX_DECODED_BYTES:
+                raise ValueError("Decoded clip exceeds 128 MiB; select a shorter interval")
             audio.seek(first)
             samples = audio.read(frames, dtype="float32", always_2d=True).T.copy()
             rate = audio.samplerate
@@ -77,6 +93,11 @@ def load_audio(path: str, start: float | None = None, end: float | None = None) 
 def upload_wav(clip: AudioClip) -> Iterator[Path]:
     """Yield a temporary 16 kHz mono WAV and remove it even if upload fails."""
     mono = np.mean(clip.samples.astype(np.float64), axis=0)
+    original_power = float(np.mean(clip.samples.astype(np.float64) ** 2))
+    if original_power and np.mean(mono**2) < original_power * 1e-4:
+        raise AudioPreparationError(
+            "Stereo downmix cancels most audio (over 40 dB loss); provide a mono guitar stem"
+        )
     divisor = math.gcd(clip.sample_rate, 16000)
     converted = resample_poly(mono, 16000 // divisor, clip.sample_rate // divisor)
     with tempfile.TemporaryDirectory(prefix="tone-listener-") as directory:
