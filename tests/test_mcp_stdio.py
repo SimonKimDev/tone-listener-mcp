@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -17,9 +18,10 @@ def test_stdio_tools(tmp_path):
 
     async def exercise():
         environment = {**os.environ, "GEMINI_API_KEY": ""}
+        executable = shutil.which("tone-listener-mcp", path=str(Path(sys.executable).parent))
+        assert executable is not None, "Install the project to test the console entry point"
         params = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "tone_listener_mcp.server"],
+            command=executable,
             env=environment,
             cwd=Path(__file__).resolve().parents[1],
         )

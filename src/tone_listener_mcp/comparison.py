@@ -8,6 +8,16 @@ from tone_listener_mcp.audio_io import AudioClip
 from tone_listener_mcp.listener import listen_comparison
 from tone_listener_mcp.metrics import BANDS, measure
 
+BAND_LABELS = {
+    "below_80": "below 80 Hz",
+    "80_250": "80-250 Hz",
+    "250_800": "250-800 Hz",
+    "800_2000": "800 Hz-2 kHz",
+    "2000_5000": "2-5 kHz",
+    "5000_8000": "5-8 kHz",
+    "above_8000": "above 8 kHz",
+}
+
 
 def delta(a: float | None, b: float | None) -> float | None:
     return b - a if a is not None and b is not None else None
@@ -50,7 +60,7 @@ def compare(a: AudioClip, b: AudioClip, focus: str | None = None) -> dict:
         if value is not None and abs(value) >= 1:
             direction = "Cut" if value > 0 else "Boost"
             hints.append(
-                f"B has {value:+.1f} dB relative band energy versus A in {name} Hz. "
+                f"B has {value:+.1f} dB relative band energy versus A in {BAND_LABELS[name]}. "
                 f"{direction} this region in B toward A; this is an EQ direction, not a knob value."
             )
     stereo_a, stereo_b = metrics_a["stereo"], matched_metrics_b["stereo"]

@@ -173,3 +173,19 @@ def test_uncertain_gain_and_system_instruction(client, audio, listening_payload)
     assert result["listening"]["gain_level"] == "uncertain"
     config = client.models.generate_content.call_args.kwargs["config"]
     assert "Never claim an exact amp" in config.system_instruction
+
+
+def test_processing_timeout_cleans_up(client, audio, monkeypatch):
+    client.files.upload.return_value.state = types.FileState.PROCESSING
+    monkeypatch.setattr("tone_listener_mcp.listener.time.monotonic", MagicMock(side_effect=[0, 31]))
+    result = listen(audio)
+    assert "TimeoutError" in result["listening_unavailable"]
+    client.files.delete.assert_called_once_with(name="files/test")
+    client.models.generate_content.assert_not_called()
+
+
+def test_failed_upload_state(client, audio):
+    client.files.upload.return_value.state = types.FileState.FAILED
+    assert listen(audio)["listening_unavailable"]
+    client.files.delete.assert_called_once_with(name="files/test")
+    client.models.generate_content.assert_not_called()

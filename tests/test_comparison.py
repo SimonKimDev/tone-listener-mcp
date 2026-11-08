@@ -40,7 +40,7 @@ def test_high_frequency_boost_direction():
     result = compare(clip(low + high), clip(low + 2 * high))
     difference = result["deltas_b_minus_a"]["relative_band_db"]["2000_5000"]
     assert difference == pytest.approx(10 * np.log10(0.8 / 0.5), abs=0.05)
-    assert any("Cut" in hint and "2000_5000" in hint for hint in result["eq_direction_hints"])
+    assert any("Cut" in hint and "2-5 kHz" in hint for hint in result["eq_direction_hints"])
     assert result["deltas_b_minus_a"]["centroid_hz"] > 0
 
 
@@ -86,3 +86,20 @@ def test_two_uploads_one_request(monkeypatch):
     assert client.files.upload.call_count == 2
     assert client.files.delete.call_count == 2
     client.models.generate_content.assert_called_once()
+
+
+def test_b_upload_failure_removes_a(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.files.upload.side_effect = [
+        SimpleNamespace(name="files/A", uri="https://example.invalid/A",
+                        state=types.FileState.ACTIVE),
+        OSError("second upload failed"),
+    ]
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", lambda **kwargs: client)
+    result = compare(clip(np.ones(1000) * 0.1), clip(np.ones(1000) * 0.05))
+    assert result["listening_unavailable"]
+    assert result["metrics_a"]["level"]["rms_dbfs"] is not None
+    client.files.delete.assert_called_once_with(name="files/A")
+    client.models.generate_content.assert_not_called()
