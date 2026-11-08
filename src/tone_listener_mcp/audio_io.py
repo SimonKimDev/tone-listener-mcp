@@ -24,7 +24,7 @@ class AudioPreparationError(ValueError):
 
 @dataclass(frozen=True)
 class AudioClip:
-    samples: np.ndarray  # [channels, frames], float32
+    samples: np.ndarray  # [channels, frames], floating point
     sample_rate: int
     source: str
     start_seconds: float = 0.0
@@ -89,9 +89,8 @@ def load_audio(path: str, start: float | None = None, end: float | None = None) 
     return AudioClip(samples, rate, str(source), first / rate)
 
 
-@contextmanager
-def upload_wav(clip: AudioClip) -> Iterator[Path]:
-    """Yield a temporary 16 kHz mono WAV and remove it even if upload fails."""
+def prepare_upload(clip: AudioClip) -> AudioClip:
+    """Convert to the waveform Gemini receives, before upload-only level matching."""
     mono = np.mean(clip.samples.astype(np.float64), axis=0)
     original_power = float(np.mean(clip.samples.astype(np.float64) ** 2))
     if original_power and np.mean(mono**2) < original_power * 1e-4:
@@ -100,8 +99,15 @@ def upload_wav(clip: AudioClip) -> Iterator[Path]:
         )
     divisor = math.gcd(clip.sample_rate, 16000)
     converted = resample_poly(mono, 16000 // divisor, clip.sample_rate // divisor)
+    return AudioClip(converted[None, :], 16000, clip.source, clip.start_seconds)
+
+
+@contextmanager
+def upload_wav(clip: AudioClip) -> Iterator[Path]:
+    """Yield a temporary 16 kHz mono WAV and remove it even if upload fails."""
+    prepared = prepare_upload(clip)
     with tempfile.TemporaryDirectory(prefix="tone-listener-") as directory:
         path = Path(directory) / "clip.wav"
         # FLOAT avoids hard clipping after loudness matching.
-        sf.write(path, converted, 16000, subtype="FLOAT")
+        sf.write(path, prepared.samples.T, 16000, subtype="FLOAT")
         yield path

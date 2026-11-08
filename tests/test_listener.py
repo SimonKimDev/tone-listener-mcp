@@ -133,7 +133,9 @@ def test_timestamp_and_confidence_validation(client, audio, listening_payload):
 
 def test_upload_failure_and_processing(client, audio):
     client.files.upload.side_effect = OSError("failed upload")
-    assert listen(audio)["listening_unavailable"]
+    result = listen(audio)
+    assert result["listening_unavailable"]
+    assert result["listening_failure_stage"] == "upload"
     client.files.delete.assert_not_called()
     client.files.upload.side_effect = None
     client.files.upload.return_value.state = types.FileState.PROCESSING
@@ -173,6 +175,9 @@ def test_uncertain_gain_and_system_instruction(client, audio, listening_payload)
     assert result["listening"]["gain_level"] == "uncertain"
     config = client.models.generate_content.call_args.kwargs["config"]
     assert "Never claim an exact amp" in config.system_instruction
+    assert config.temperature is None
+    assert config.top_p is None
+    assert config.top_k is None
 
 
 def test_processing_timeout_cleans_up(client, audio, monkeypatch):
@@ -189,3 +194,14 @@ def test_failed_upload_state(client, audio):
     assert listen(audio)["listening_unavailable"]
     client.files.delete.assert_called_once_with(name="files/test")
     client.models.generate_content.assert_not_called()
+
+
+def test_prepared_silent_comparison_is_explicit(client, audio):
+    from tone_listener_mcp.listener import listen_comparison
+
+    silence = AudioClip(np.zeros((1, 16000)), 16000, "synthetic")
+    result = listen_comparison(audio, silence)
+    assert not result["upload_loudness_match"]["applied"]
+    assert result["upload_loudness_match"]["additional_gain_db_applied_to_b"] is None
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    assert "matching is undefined" in contents[0]

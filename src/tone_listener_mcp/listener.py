@@ -13,7 +13,7 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, Field
 
-from tone_listener_mcp.audio_io import AudioClip, AudioPreparationError, upload_wav
+from tone_listener_mcp.audio_io import AudioClip, AudioPreparationError, prepare_upload, upload_wav
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 logger = logging.getLogger(__name__)
@@ -93,10 +93,38 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
         "listening_unavailable": None,
         "cleanup_warnings": [],
         "upload_gain_db": 0.0,
+        "upload_loudness_match": None,
+        "listening_failure_stage": None,
     }
     if not api_key:
         result["listening_unavailable"] = "GEMINI_API_KEY is not set; local metrics only"
         return result
+    failure_types = (errors.APIError, httpx.HTTPError, OSError, ValueError, TimeoutError)
+    try:
+        clips = [prepare_upload(clip) for clip in clips]
+    except failure_types as exc:
+        result["listening_unavailable"] = _failure_reason(exc)
+        result["listening_failure_stage"] = "prepare_upload"
+        logger.warning("%s", result["listening_unavailable"])
+        return result
+    if len(clips) == 2:
+        powers = [float(np.mean(clip.samples**2)) for clip in clips]
+        if min(powers) <= 1e-9:
+            result["upload_loudness_match"] = {
+                "applied": False,
+                "additional_gain_db_applied_to_b": None,
+                "reason": "Prepared audio is silent or below -90 dBFS; upload matching is undefined",
+            }
+            prompt += "\nUpload RMS matching is undefined: at least one prepared clip is inaudible."
+        else:
+            gain_b = float(np.sqrt(powers[0] / powers[1]))
+            b = clips[1]
+            clips[1] = AudioClip(b.samples * gain_b, b.sample_rate, b.source, b.start_seconds)
+            result["upload_loudness_match"] = {
+                "applied": True,
+                "additional_gain_db_applied_to_b": float(20 * np.log10(gain_b)),
+                "reason": None,
+            }
     peak = max(float(np.max(np.abs(clip.samples))) for clip in clips)
     if peak > 1:
         gain = 0.99 / peak
@@ -106,20 +134,22 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
             for clip in clips
         ]
         result["upload_gain_db"] = float(20 * np.log10(gain))
-    failure_types = (errors.APIError, httpx.HTTPError, OSError, ValueError, TimeoutError)
     try:
         client_instance = genai.Client(
             api_key=api_key, http_options=types.HttpOptions(timeout=60000)
         )
     except failure_types as exc:
         result["listening_unavailable"] = _failure_reason(exc)
+        result["listening_failure_stage"] = "create_client"
         logger.warning("%s", result["listening_unavailable"])
         return result
     with client_instance as client:
         names: list[str] = []
+        stage = "upload"
         try:
             contents: list = [prompt]
             for index, clip in enumerate(clips):
+                stage = "upload"
                 with upload_wav(clip) as path:
                     uploaded = client.files.upload(
                         file=path, config=types.UploadFileConfig(mime_type="audio/wav")
@@ -127,6 +157,7 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
                 if not uploaded.name:
                     raise ValueError("Upload response has no file name")
                 names.append(uploaded.name)
+                stage = "upload_processing"
                 deadline = time.monotonic() + 30
                 while uploaded.state == types.FileState.PROCESSING:
                     if time.monotonic() >= deadline:
@@ -139,6 +170,7 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
                     [f"Clip {'AB'[index]} ({clip.duration:.3f} seconds)",
                      types.Part.from_uri(file_uri=uploaded.uri, mime_type="audio/wav")]
                 )
+            stage = "generate"
             response = client.models.generate_content(
                 model=model,
                 contents=contents,
@@ -146,11 +178,11 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
                     system_instruction=LISTENING_INSTRUCTIONS,
                     response_mime_type="application/json",
                     response_schema=schema,
-                    temperature=0.2,
                 ),
             )
             if not response.text:
                 raise ValueError("Gemini returned no listening response")
+            stage = "validate"
             parsed = schema.model_validate_json(response.text)
             if isinstance(parsed, ListeningResult) and any(
                 item.timestamp > clips[0].duration for item in parsed.evidence
@@ -162,6 +194,7 @@ def _request(clips: list[AudioClip], prompt: str, schema: type[BaseModel]) -> di
             reason = _failure_reason(exc)
             logger.warning("%s", reason)
             result["listening_unavailable"] = reason
+            result["listening_failure_stage"] = stage
         finally:
             for name in names:
                 try:

@@ -38,6 +38,30 @@ def test_dynamics():
     assert result["short_term_rms_range_db"] == pytest.approx(20, abs=0.01)
 
 
+def test_robust_range_ignores_silence_gaps():
+    samples = sine()
+    samples[:24000] *= 0.1
+    gapped = np.concatenate((np.zeros(48000), samples, np.zeros(48000)))
+    result = measure(clip(gapped))["level"]
+    assert result["short_term_rms_range_db"] == pytest.approx(20, abs=0.01)
+    assert result["active_window_fraction"] == pytest.approx(1 / 3)
+    assert result["silent_window_fraction"] == pytest.approx(2 / 3)
+
+
+def test_decaying_tail_range_is_finite_and_bounded():
+    samples = sine() * np.exp(-np.arange(48000) / 48000 * 50)
+    result = measure(clip(samples))["level"]
+    assert result["short_term_rms_range_db"] is not None
+    assert 0 < result["short_term_rms_range_db"] < 90
+    assert result["active_window_fraction"] < 1
+    json.dumps(result, allow_nan=False)
+
+
+def test_too_few_active_windows():
+    result = measure(clip(sine()[:2400]))["level"]
+    assert result["short_term_rms_range_db"] is None
+
+
 def test_sine_spectrum():
     result = measure(clip(sine()))["spectrum"]
     assert result["centroid_hz"] == pytest.approx(1000, abs=2)

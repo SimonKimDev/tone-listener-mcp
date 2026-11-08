@@ -13,19 +13,30 @@ from scipy.signal import butter, fftconvolve, sosfilt
 from tone_listener_mcp.audio_io import load_audio
 
 
-def synthetic_phrase(seconds: float, rate: int = 48000) -> np.ndarray:
+def synthetic_phrase(
+    seconds: float, rate: int = 48000, seed: int | None = None
+) -> np.ndarray:
     samples = np.zeros(round(seconds * rate), dtype=np.float64)
+    rng = np.random.default_rng(seed)
     for onset in np.arange(0, seconds, 0.5):
         offset = round(onset * rate)
         t = np.arange(min(round(rate * 0.45), len(samples) - offset)) / rate
-        note = sum(np.sin(2 * np.pi * 220 * harmonic * t) / harmonic
+        frequency = 220 if seed is None else float(rng.choice([146.83, 196, 246.94, 293.66]))
+        decay = 6 if seed is None else float(rng.uniform(4, 9))
+        note = sum(np.sin(2 * np.pi * frequency * harmonic * t) / harmonic
                    for harmonic in range(1, 13))
-        envelope = (1 - np.exp(-t * 500)) * np.exp(-t * 6)
+        envelope = (1 - np.exp(-t * 500)) * np.exp(-t * decay)
         samples[offset : offset + len(t)] += note * envelope * 0.2
     return samples
 
 
-def generate(output: Path, seconds: float = 4, source: str | None = None) -> dict[str, Path]:
+def generate(
+    output: Path,
+    seconds: float = 4,
+    source: str | None = None,
+    seed: int | None = None,
+    held_out: bool = False,
+) -> dict[str, Path]:
     if not math.isfinite(seconds) or not 0.1 <= seconds <= 30:
         raise ValueError("seconds must be finite and between 0.1 and 30")
     if source:
@@ -33,21 +44,23 @@ def generate(output: Path, seconds: float = 4, source: str | None = None) -> dic
         samples = loaded.samples.astype(np.float64)
         rate = loaded.sample_rate
     else:
-        samples = synthetic_phrase(seconds)[None, :]
+        samples = synthetic_phrase(seconds, seed=seed)[None, :]
         rate = 48000
-    low = sosfilt(butter(2, min(1000, rate / 4), fs=rate, output="sos"), samples, axis=-1)
+    split = 1400 if held_out else 1000
+    low = sosfilt(butter(2, min(split, rate / 4), fs=rate, output="sos"), samples, axis=-1)
     impulse = np.zeros(round(rate * 0.25) + 1)
     impulse[0] = 1
     for delay, amplitude in ((0.035, 0.32), (0.071, 0.24), (0.113, 0.18), (0.173, 0.12)):
-        impulse[round(delay * rate)] = amplitude
+        actual_delay = delay * (1.2 if held_out else 1)
+        impulse[round(actual_delay * rate)] = amplitude * (0.8 if held_out else 1)
     variants = {
         "reference": samples,
         "gain_quiet": samples * 0.5,
         "gain_loud": samples * 1.5,
-        "drive_light": np.tanh(samples * 2),
-        "drive_heavy": np.tanh(samples * 8),
-        "eq_dark": 0.5 * samples + 0.5 * low,
-        "eq_bright": samples + (samples - low),
+        "drive_light": np.tanh(samples * (2.5 if held_out else 2)),
+        "drive_heavy": np.tanh(samples * (7 if held_out else 8)),
+        "eq_dark": 0.6 * samples + 0.4 * low if held_out else 0.5 * samples + 0.5 * low,
+        "eq_bright": samples + (samples - low) * (0.8 if held_out else 1),
         "reverb": np.stack([fftconvolve(channel, impulse) for channel in samples]),
     }
     peak = max(float(np.max(np.abs(variant))) for variant in variants.values())
@@ -68,8 +81,12 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source", help="Optional DI recording; defaults to a synthetic plucked phrase")
     parser.add_argument("--seconds", type=float, default=4)
+    parser.add_argument("--seed", type=int, help="Use a reproducible varied-pitch synthetic phrase")
+    parser.add_argument("--held-out", action="store_true", help="Use separate processing settings")
     args = parser.parse_args()
-    for name, path in generate(args.output, args.seconds, args.source).items():
+    for name, path in generate(
+        args.output, args.seconds, args.source, args.seed, args.held_out
+    ).items():
         print(f"{name}: {path}")
 
 

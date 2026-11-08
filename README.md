@@ -144,8 +144,13 @@ For a 0.5-peak, 1 kHz synthetic sine, selected fields look like this
 }
 ```
 
-Levels include 50 ms short-term RMS power percentiles (p10, p50, p90) and range
-as dynamics proxies. These are **not LUFS** or a perceptual loudness measurement.
+Levels include 50 ms short-term RMS power percentiles (p10, p50, p90) over all
+windows, plus a robust active-window range as a dynamics proxy. The range is
+p90 minus p10 of window dBFS above -90 dBFS, requiring at least three active
+windows. `short_term_range_method` describes this statistic and
+`active_window_fraction` reports its coverage. These are **not LUFS** or a
+perceptual loudness measurement. This replaces the original max/min range;
+consumers should not compare old and new range values as the same statistic.
 Spectrum uses Welch's method with a Hann window and up to 4096 frames, averaging
 channel powers so antiphase stereo does not disappear. Frequency resolution and
 Nyquist are reported. Band IDs cover `<80`, `80-250`, `250-800`, `800-2000`,
@@ -154,9 +159,10 @@ to total spectral power, not an absolute EQ control value.
 
 Stereo reports L/R correlation and side/mid energy ratio dB, with separate mid
 and side RMS levels. `null` means undefined or unavailable, including silence,
-mono stereo metrics, zero side/mid energy, or bands above Nyquist. A short-term
-range containing a zero-energy window is undefined; inspect
-`silent_window_fraction` as well. No NaN or Infinity is returned.
+mono stereo metrics, zero side/mid energy, or bands above Nyquist. The robust
+range is undefined with fewer than three active windows; silence gaps and
+sub-floor tails are excluded. Inspect `silent_window_fraction` and
+`active_window_fraction` as well. No NaN or Infinity is returned.
 
 ### Listening
 
@@ -180,7 +186,10 @@ No key gives an explicit local-only response:
 ```
 
 This excerpt omits the returned local `metrics`. Provider errors and invalid
-model responses similarly preserve metrics, with a sanitized failure reason.
+model responses similarly preserve metrics, with a sanitized failure reason
+and `listening_failure_stage` (preparation, client creation, upload, processing,
+generation or validation) to distinguish actionable failures without exposing
+API headers or response bodies.
 **Confidence is model self-assessment, not calibrated accuracy.** Live listening
 quality requires evaluation against recordings with known changes.
 
@@ -209,8 +218,10 @@ should not produce a tonal difference:
 ```
 
 This excerpt describes B at half A's amplitude. Deltas use **B minus A**;
-positive band deltas mean relatively more energy in B. Direction hints suggest
-cutting or boosting B toward A, not exact gain/EQ knobs. Silence makes RMS
+positive band deltas mean relatively more energy in B. Band hints are non-causal
+observations: saturation harmonics, playing and ambience can also change them.
+They suggest an EQ direction **only if EQ is the cause**, not a distortion
+diagnosis, exact knob settings or proof that EQ will recreate A. Silence makes RMS
 matching undefined and is explicitly reported. Stereo deltas require two stereo
 clips. Gemini compares both uploads in one request and returns differences,
 which clip is brighter/more saturated/more compressed/more ambient, suggested
@@ -231,8 +242,16 @@ Uploads are resampled to **16 kHz mono** (sample rate, not 16 kbps bitrate).
 Stereo and fine high-frequency detail must come from local metrics, not listening
 claims. Severe stereo downmix cancellation (more than 40 dB power loss) disables
 listening with an explicit reason; provide a mono guitar stem instead.
-If loudness matching exceeds full scale, the same attenuation is applied to both
-uploads and reported as `upload_gain_db`; original local measurements are unchanged.
+For listening comparisons, a second RMS match is performed **after mono
+conversion and resampling**, on the actual upload waveforms. Stereo cancellation
+and high-frequency band loss can otherwise undo the original-resolution match.
+`upload_loudness_match.additional_gain_db_applied_to_b` reports this additional
+upload-only adjustment, separate from local `loudness_match`. Upload matching is
+undefined if either prepared signal is silent or below -90 dBFS; the response
+and provider prompt say so. Single-clip analysis has no upload A/B match.
+If the prepared/matched signals exceed full scale, the same attenuation is
+applied to both uploads and reported as `upload_gain_db`. Peak safety is checked
+after resampling; original local measurements are unchanged.
 
 Full mixes can confuse cymbals with guitar fizz, doubling with delay and other
 instruments with guitar ambience/compression. Isolate the guitar where possible.
@@ -256,7 +275,10 @@ See [controlled validation](docs/validation.md) for known gain, soft clipping,
 EQ and simple reverb variants. Tests are synthetic/offline with mocked Gemini;
 the stdio integration test spawns the real server and exercises all four tools.
 GitHub Actions runs lint and tests on Python 3.11 and 3.12 on push or manual
-dispatch. Live Gemini checks are opt-in, require a key and incur API usage.
+dispatch. The opt-in `scripts.eval_listening` harness runs blinded, swapped A/B
+judgments with separate tuning/held-out sets; see the validation guide for
+request budgets and credential loading. Live Gemini checks require a key and
+incur API usage; skipped runs do not measure listening accuracy.
 
 ## License
 

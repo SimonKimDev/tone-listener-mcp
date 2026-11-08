@@ -32,6 +32,10 @@ def test_known_variants(tmp_path):
     assert measure(recordings["drive_heavy"])["level"]["crest_factor_db"] < (
         measure(recordings["drive_light"])["level"]["crest_factor_db"]
     )
+    driven = compare(recordings["reference"], recordings["drive_heavy"])
+    assert all("saturation" in hint for hint in driven["eq_direction_hints"])
+    assert all("Cut this" not in hint for hint in driven["eq_direction_hints"])
+    assert reference["level"]["short_term_rms_range_db"] is not None
     assert recordings["reverb"].duration > recordings["reference"].duration
     assert all(np.max(np.abs(recording.samples)) <= 1 for recording in recordings.values())
     retry = subprocess.run(

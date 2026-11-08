@@ -9,6 +9,7 @@ build/
 .ruff_cache/
 .mypy_cache/
 .env
+.eval/
 .env.*
 !.env.example
 .DS_Store

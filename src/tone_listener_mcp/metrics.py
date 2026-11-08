@@ -33,16 +33,20 @@ def level_metrics(clip: AudioClip) -> dict:
     )
     percentiles = np.percentile(short_powers, [10, 50, 90])
     short_db = [power_db(float(value)) for value in percentiles]
+    active = short_powers[short_powers > 1e-9]
+    active_db = 10 * np.log10(active) if active.size else np.array([])
+    robust_range = (
+        float(np.diff(np.percentile(active_db, [10, 90]))[0]) if active.size >= 3 else None
+    )
     return {
         "peak_dbfs": power_db(peak_power),
         "rms_dbfs": power_db(power),
         "crest_factor_db": power_db(peak_power / power) if power else None,
         "short_term_window_seconds": window / clip.sample_rate,
         "short_term_rms_dbfs": dict(zip(("p10", "p50", "p90"), short_db)),
-        "short_term_rms_range_db": (
-            power_db(float(np.max(short_powers) / np.min(short_powers)))
-            if np.min(short_powers) > 0 else None
-        ),
+        "short_term_rms_range_db": robust_range,
+        "short_term_range_method": "p90-p10 of window dBFS above -90 dBFS; minimum 3 windows",
+        "active_window_fraction": float(active.size / short_powers.size),
         "silent_window_fraction": float(np.mean(short_powers == 0)),
     }
 

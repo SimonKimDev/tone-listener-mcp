@@ -55,13 +55,21 @@ def compare(a: AudioClip, b: AudioClip, focus: str | None = None) -> dict:
         )
         for name, _, _ in BANDS
     }
+    crest_delta = delta(
+        metrics_a["level"]["crest_factor_db"], matched_metrics_b["level"]["crest_factor_db"]
+    )
     hints = []
     for name, value in band_deltas.items():
         if value is not None and abs(value) >= 1:
             direction = "Cut" if value > 0 else "Boost"
-            hints.append(
+            observation = (
                 f"B has {value:+.1f} dB relative band energy versus A in {BAND_LABELS[name]}. "
-                f"{direction} this region in B toward A; this is an EQ direction, not a knob value."
+            )
+            hints.append(
+                observation + "This is not a diagnosis of EQ: saturation harmonics, performance "
+                "and ambience can also change band energy. Compare drive/dynamics first. "
+                f"Only if EQ is the cause, try a relative {direction.lower()} in B; "
+                "this is not a knob value or proof that EQ can recreate A."
             )
     stereo_a, stereo_b = metrics_a["stereo"], matched_metrics_b["stereo"]
     stereo_deltas = (
@@ -78,9 +86,7 @@ def compare(a: AudioClip, b: AudioClip, focus: str | None = None) -> dict:
             "relative_band_db": band_deltas,
             "centroid_hz": delta(spectrum_a["centroid_hz"], spectrum_b["centroid_hz"]),
             "rolloff_85_hz": delta(spectrum_a["rolloff_85_hz"], spectrum_b["rolloff_85_hz"]),
-            "crest_factor_db": delta(
-                metrics_a["level"]["crest_factor_db"], matched_metrics_b["level"]["crest_factor_db"]
-            ),
+            "crest_factor_db": crest_delta,
             "stereo": stereo_deltas,
         },
         "eq_direction_hints": hints,

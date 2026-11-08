@@ -40,7 +40,7 @@ def test_high_frequency_boost_direction():
     result = compare(clip(low + high), clip(low + 2 * high))
     difference = result["deltas_b_minus_a"]["relative_band_db"]["2000_5000"]
     assert difference == pytest.approx(10 * np.log10(0.8 / 0.5), abs=0.05)
-    assert any("Cut" in hint and "2-5 kHz" in hint for hint in result["eq_direction_hints"])
+    assert any("cut" in hint and "2-5 kHz" in hint for hint in result["eq_direction_hints"])
     assert result["deltas_b_minus_a"]["centroid_hz"] > 0
 
 
@@ -103,3 +103,63 @@ def test_b_upload_failure_removes_a(monkeypatch):
     assert result["metrics_a"]["level"]["rms_dbfs"] is not None
     client.files.delete.assert_called_once_with(name="files/A")
     client.models.generate_content.assert_not_called()
+
+
+@pytest.mark.parametrize("case", ["stereo_downmix", "resampling_bandloss", "peak_safety"])
+def test_actual_uploaded_waveforms_are_rms_matched(monkeypatch, case):
+    import soundfile as sf
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    t = np.arange(48000) / 48000
+    signal = 0.2 * np.sin(2 * np.pi * 1000 * t)
+    a = clip(signal)
+    if case == "stereo_downmix":
+        b = clip(np.stack((signal, -0.5 * signal)))
+    elif case == "resampling_bandloss":
+        b = clip(signal + 0.4 * np.sin(2 * np.pi * 12000 * t))
+    else:
+        a = clip(np.ones(48000) * 0.8)
+        b = clip(np.concatenate(([0.9], np.ones(47999) * 0.01)))
+    uploaded = []
+    client = MagicMock()
+    client.__enter__.return_value = client
+
+    def capture(**kwargs):
+        data, rate = sf.read(kwargs["file"])
+        assert rate == 16000 and data.ndim == 1
+        uploaded.append(data)
+        return SimpleNamespace(
+            name=f"files/{len(uploaded)}", uri="https://example.invalid/audio",
+            state=types.FileState.ACTIVE,
+        )
+
+    client.files.upload.side_effect = capture
+    client.models.generate_content.return_value.text = json.dumps({
+        "differences": [], "brighter": "similar", "more_saturated": "similar",
+        "more_compressed": "similar", "more_ambient": "similar",
+        "suggested_adjustments": [], "uncertainties": [], "confidence": 0.5,
+    })
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", lambda **kwargs: client)
+    result = compare(a, b)
+    assert result["listening_unavailable"] is None
+    assert len(uploaded) == 2
+    rms_a, rms_b = [np.sqrt(np.mean(data**2)) for data in uploaded]
+    assert rms_a == pytest.approx(rms_b, rel=1e-6)
+    assert max(np.max(np.abs(data)) for data in uploaded) <= 1
+    assert result["upload_loudness_match"]["applied"]
+    if case == "stereo_downmix":
+        assert result["upload_loudness_match"]["additional_gain_db_applied_to_b"] == (
+            pytest.approx(10, abs=0.01)
+        )
+        assert result["metrics_b"]["clip"]["channels"] == 2
+
+
+def test_antiphase_comparison_does_not_upload(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    client = MagicMock()
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", lambda **kwargs: client)
+    signal = np.sin(2 * np.pi * 1000 * np.arange(48000) / 48000) * 0.1
+    result = compare(clip(signal), clip(np.stack((signal, -signal))))
+    assert "Stereo downmix cancels" in result["listening_unavailable"]
+    assert result["metrics_b"]["level"]["rms_dbfs"] is not None
+    client.files.upload.assert_not_called()
