@@ -33,11 +33,13 @@ def test_stdio_tools(tmp_path):
             await session.initialize()
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == {
-                "server_info", "audio_metrics", "analyze_audio", "compare_audio"
+                "server_info", "audio_metrics", "analyze_audio", "compare_audio", "analyze_youtube"
             }
             info = await session.call_tool("server_info")
             assert not info.is_error
             assert info.structured_content["name"] == "tone-listener-mcp"
+            assert info.structured_content["primary_tool"] == "analyze_youtube"
+            assert info.structured_content["youtube_local_extraction"] is False
             result = await session.call_tool("audio_metrics", {"path": str(path)})
             assert not result.is_error
             assert abs(result.structured_content["spectrum"]["centroid_hz"] - 1000) < 5
@@ -49,6 +51,17 @@ def test_stdio_tools(tmp_path):
             )
             assert not comparison.is_error
             assert comparison.structured_content["loudness_match"]["gain_db_applied_to_b"] == 0
+            youtube = await session.call_tool(
+                "analyze_youtube", {"url": "https://youtu.be/9hE5-98ZeCg", "start": 12, "end": 20}
+            )
+            assert not youtube.is_error
+            assert youtube.structured_content["metrics"] is None
+            assert youtube.structured_content["listening_unavailable"]
+            assert youtube.structured_content["input_transport"] == "youtube_url"
+            invalid_url = await session.call_tool(
+                "analyze_youtube", {"url": "https://example.invalid/video"}
+            )
+            assert invalid_url.is_error
             invalid = await session.call_tool(
                 "audio_metrics", {"path": str(tmp_path / "missing.wav")}
             )

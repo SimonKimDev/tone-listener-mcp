@@ -1,12 +1,46 @@
 # tone-listener-mcp
 
-An MCP server that lets AI agents *listen* to guitar tone recordings and compare
-a candidate tone against a reference. Use it to guide relative gain, EQ and effects
-adjustments in software such as Soundshed Guitar, not to guess exact equipment.
+Give your AI agent a **public YouTube guitar reference link** and ask how to
+approach its tone. `analyze_youtube` sends a bounded segment directly to Gemini
+for structured listening: gain, attack, compression, frequency character,
+effects, timestamped evidence and uncertainty. No manual audio preparation is
+needed for this primary workflow.
 
-Local NumPy/SciPy measurements handle levels, spectrum, dynamics and stereo.
-Optional Gemini audio understanding adds cautious descriptions of what is audible.
-Without an API key, analysis and comparison still return local measurements.
+Use the observations to guide relative gain, EQ and effects adjustments in
+software such as Soundshed Guitar, not to guess exact gear or knob settings.
+The YouTube workflow **does not download/extract a WAV, isolate guitar stems,
+or compute local DSP metrics**. It requires Gemini inference access.
+
+Local-file measurement and RMS-matched comparison are also available when you
+have recordings. These retain local metrics even without a Gemini key.
+
+## YouTube quickstart
+
+After installation and MCP registration below, ask your agent to call:
+
+```json
+{
+  "url": "https://www.youtube.com/watch?v=401iS5McuoU",
+  "start": 0,
+  "end": 30,
+  "question": "Describe the audible guitar gain, pick attack and effects without using video imagery."
+}
+```
+
+The tool is **`analyze_youtube`**. Short public `youtu.be` links and YouTube
+watch/shorts/embed/live video URLs are accepted and normalized to a single video.
+Channel/playlist URLs, private/unlisted videos and arbitrary web URLs are not
+supported. Tracking and URL timestamp parameters are discarded; specify
+`start`/`end` explicitly. Omitting `end` selects at most
+`TONE_LISTENER_MAX_SECONDS` (600 by default) after `start`, not an unlimited video.
+
+Only audible evidence should support the response; the model is instructed not
+to infer tone from images, titles, captions or visible equipment. Full mixes can
+still confuse guitar with backing tracks, vocals, drums and mastering. Evidence
+timestamps are relative to the selected segment. Public availability, model
+capacity and account quota still affect success; failures are explicit rather
+than invented listening results. See [validation](docs/validation.md) for the
+real-link check and remaining limitations.
 
 ## Install
 
@@ -36,6 +70,11 @@ your shell or set them in your MCP client's environment configuration. Never
 commit a real key. Model availability, API access and billing depend on your
 Google account. The default follows the current [Gemini audio documentation](https://ai.google.dev/gemini-api/docs/audio);
 the backend uses the SDK Files upload and `models.generate_content` APIs.
+
+The real YouTube reference check used `TONE_LISTENER_MODEL=gemini-3.6-flash`
+because 3.8 was returning high-demand 503 responses. Set that environment value
+to use the tested alternative, provided it is available to your account.
+The tool reports the actual model and does not silently switch models.
 
 ```sh
 export GEMINI_API_KEY="your-key"
@@ -90,8 +129,8 @@ are resolved on the machine running this server, not necessarily the client mach
 
 ## Tools
 
-All tools return structured JSON as well as MCP-compatible content. Invalid files
-or intervals return an MCP tool error. Times are seconds; `start` defaults to zero,
+All tools return structured JSON as well as MCP-compatible content. Invalid files,
+URLs or intervals return an MCP tool error. Local-file times are seconds; `start` defaults to zero,
 `end` is exclusive and defaults to EOF. An endpoint past EOF is clamped to EOF.
 `~` is expanded, and original channels/sample rate are retained for local metrics.
 Only mono/stereo audio up to 192 kHz is accepted. Selected float32 decoded audio is
@@ -101,6 +140,7 @@ limit is exceeded.
 | Tool | Arguments | Result |
 |---|---|---|
 | `server_info` | None | Server name and version |
+| `analyze_youtube` | `url`, optional `start`, `end`, `question` | Primary public YouTube listening; `metrics: null`, no local audio extraction |
 | `audio_metrics` | `path`, optional `start`, `end` | Local clip metadata, level, spectrum and stereo metrics; never uploads |
 | `analyze_audio` | `path`, optional `start`, `end`, `question` | Local `metrics` plus Gemini `listening`, or `listening_unavailable` |
 | `compare_audio` | `path_a`, `path_b`, optional `start_a`, `end_a`, `start_b`, `end_b`, `focus` | Reference A vs candidate B, RMS matching, deltas, EQ directions and optional A/B listening |
@@ -166,14 +206,20 @@ sub-floor tails are excluded. Inspect `silent_window_fraction` and
 
 ### Listening
 
-`analyze_audio` returns a `listening` object with `summary`, `gain_level`,
+`analyze_youtube` and `analyze_audio` return a `listening` object with `summary`, `gain_level`,
 `brightness`, `low_end`, `mids_character`, `pick_attack`, `compression_feel`,
 `effects` (reverb/delay/modulation presence, amount and notes), `playing_notes`,
 timestamped `evidence`, `uncertainties` and `confidence`.
 Gain categories include clean, edge-of-breakup, crunch, overdrive, distortion,
 high-gain and uncertain. Evidence timestamps are relative to the selected clip.
 
-No key gives an explicit local-only response:
+For YouTube, the result also reports the normalized `source` URL/interval,
+`input_transport: "youtube_url"`, `metrics: null` and `metrics_unavailable`.
+It uses the documented video URI/interval metadata through the Gemini API;
+no downloader or local files are involved. A missing key returns a clear
+YouTube-listening-unavailable reason, with no pretend local metrics.
+
+For local-file analysis, no key gives an explicit local-only response:
 
 ```json
 {
@@ -229,7 +275,12 @@ adjustments and uncertainties.
 
 ## Privacy and limitations
 
-With a key configured, `analyze_audio` uploads the selected clip to Google,
+With a key configured, `analyze_youtube` sends the public video URL and selected
+interval to Google, which processes the source remotely. It does not extract a
+local waveform or persist a media file. Public video processing is subject to
+Google's supported YouTube-input rules, quotas and terms.
+
+`analyze_audio` uploads the selected clip to Google,
 and `compare_audio` uploads both selected clips. Only use recordings you have
 permission to share. `audio_metrics` is always local. Temporary WAVs are deleted
 on exit; uploaded files are deleted after the request, including most failure
@@ -238,7 +289,7 @@ retention are governed by Google's terms; deletion is not a zero-retention guara
 Local paths are included in local result metadata but not intentionally sent in
 provider prompts. A user-supplied question/focus is sent to Google.
 
-Uploads are resampled to **16 kHz mono** (sample rate, not 16 kbps bitrate).
+Local-file uploads are resampled to **16 kHz mono** (sample rate, not 16 kbps bitrate).
 Stereo and fine high-frequency detail must come from local metrics, not listening
 claims. Severe stereo downmix cancellation (more than 40 dB power loss) disables
 listening with an explicit reason; provide a mono guitar stem instead.
@@ -273,7 +324,7 @@ possible; start/end should cover equivalent musical material.
 
 See [controlled validation](docs/validation.md) for known gain, soft clipping,
 EQ and simple reverb variants. Tests are synthetic/offline with mocked Gemini;
-the stdio integration test spawns the real server and exercises all four tools.
+the stdio integration test spawns the real server and exercises all five tools.
 GitHub Actions runs lint and tests on Python 3.11 and 3.12 on push or manual
 dispatch. The opt-in `scripts.eval_listening` harness runs blinded, swapped A/B
 judgments with separate tuning/held-out sets; see the validation guide for

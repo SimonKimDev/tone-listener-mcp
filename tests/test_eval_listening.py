@@ -135,6 +135,7 @@ def test_literal_credentials(tmp_path, monkeypatch):
     "GEMINI_API_KEY=test\nGEMINI_API_KEY=duplicate",
     "GEMINI_API_KEY=test\nUNKNOWN=value",
     "GEMINI_API_KEY=",
+    "GEMINI_API_KEY=test-key'",
 ])
 def test_credentials_reject_unsafe_or_empty_entries(tmp_path, text):
     path = tmp_path / "env"

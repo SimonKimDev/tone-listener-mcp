@@ -57,8 +57,8 @@ def load_credentials(path: Path) -> None:
         name, value = name.strip(), value.strip()
         if not separator or name not in allowed or name in entries:
             raise ValueError(f"Invalid or duplicate credential entry on line {number}")
-        if value[:1] in ("'", '"'):
-            if len(value) < 2 or value[-1] != value[0]:
+        if value[:1] in ("'", '"') or value[-1:] in ("'", '"'):
+            if len(value) < 2 or value[-1] != value[0] or value[0] not in ("'", '"'):
                 raise ValueError(f"Unclosed quote in credential entry on line {number}")
             value = value[1:-1]
         if any(character in value for character in ("$", "`", "\x00")):

@@ -43,17 +43,22 @@ class AudioClip:
         }
 
 
-def load_audio(path: str, start: float | None = None, end: float | None = None) -> AudioClip:
-    """Read a selected interval, rejecting clips over the configured duration limit."""
-    source = Path(path).expanduser().resolve()
-    if not source.is_file():
-        raise ValueError(f"Audio file does not exist or is not a regular file: {source}")
+def max_analysis_seconds() -> float:
     try:
         maximum = float(os.environ.get("TONE_LISTENER_MAX_SECONDS", "600"))
     except ValueError as exc:
         raise ValueError("TONE_LISTENER_MAX_SECONDS must be a positive finite number") from exc
     if not math.isfinite(maximum) or maximum <= 0:
         raise ValueError("TONE_LISTENER_MAX_SECONDS must be a positive finite number")
+    return maximum
+
+
+def load_audio(path: str, start: float | None = None, end: float | None = None) -> AudioClip:
+    """Read a selected interval, rejecting clips over the configured duration limit."""
+    source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise ValueError(f"Audio file does not exist or is not a regular file: {source}")
+    maximum = max_analysis_seconds()
     beginning = 0.0 if start is None else start
     if not math.isfinite(beginning) or beginning < 0:
         raise ValueError("start must be finite and nonnegative")

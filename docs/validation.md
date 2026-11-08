@@ -35,7 +35,7 @@ tone-recognition quality. A live listening check is opt-in and incurs API usage.
 Run `.venv/bin/ruff check . && .venv/bin/pytest -q` for the offline suite.
 Tests cover bounded decoding, level/spectrum/stereo metrics, linear-gain invariance,
 known EQ/drive directions, provider mocks and an actual stdio process listing and
-calling all four MCP tools. No API key or network is needed.
+calling all five MCP tools. No API key or network is needed.
 
 ## Blinded live evaluation (opt-in)
 
@@ -138,17 +138,59 @@ within 1e-6 relative tolerance for that stereo case, 12 kHz band loss during
 resampling and peak-safety cases, with separate antiphase/silence regressions.
 These tests verify preprocessing bytes, not live model quality.
 
-**Live status (2026-11-08):** the first credential-free harness run was skipped.
-After a credential was provided, real audio probes reached the API but returned
-HTTP 401: Files upload initiation failed before transfer, and a separate supported
-inline-WAV `generateContent` request also failed authentication. SDK and REST
-metadata probes using the same literal credential were also rejected in this
-environment. No key or provider error body is stored in reports. This is a
-live-access blocker, not evidence of bad listening quality or a model-direction
-failure. The full benchmark was not run against a failing credential.
+**Evaluation status (2026-11-08):** the first credential-free harness run was skipped.
+Initial live probes returned HTTP 401 because the private key file contained an
+unmatched trailing quote. The private file was corrected separately; the literal
+parser now rejects unmatched quotes without sending a malformed credential.
+The user then prioritized a real YouTube reference over synthetic benchmarking.
 
-Tuning accuracy, held-out accuracy, gain-category ordering and live order
-consistency are **not measured**. No live prompt-tuning iteration has occurred.
+Synthetic tuning accuracy, held-out accuracy, gain-category ordering and live
+order consistency are **not measured**. No synthetic prompt-tuning iteration has occurred.
 Synthetic harmonic plucks also remain a gap even after future live runs: real
 owned DI/processed guitar recordings and full-mix cases need separate evaluation
 before claiming practical guitar-tone reliability.
+
+## Real YouTube reference check (2026-11-08)
+
+The primary workflow is `analyze_youtube`, using Google's documented public
+YouTube URL input and bounded `video_metadata`, not a downloader. `metrics` is
+always null for this workflow; local WAV/DSP analysis is not implied.
+
+The user's actual reference was
+[this guitar cover](https://www.youtube.com/watch?v=401iS5McuoU).
+YouTube oEmbed/watch-page metadata identified the title as
+“藍二乗-ヨルシカ｜Guitar Cover By 雨音 空”, uploader “amane kuu / 雨音 空”,
+duration 247 seconds, and a publicly accessible page. Those are **metadata**,
+not listening evidence, and are not used to infer guitar hardware.
+
+`gemini-3.8-flash` generation returned 503 high demand. Available models were
+queried and `gemini-3.6-flash` was explicitly selected for this run after checking
+its documented audio/video/structured-output support. The configured default
+remains 3.8; the tool does not silently change models. Three requested sections
+produced HTTP 200 and schema-validated listening results:
+
+| Processed segment | Model-reported audible observations |
+|---|---|
+| 0–30 s | Clean/edge chord accompaniment at the start; brighter overdrive lead enters around 19.2 s |
+| 60–90 s | Mild crunch rhythm and upper-register lines; bright/chimey high mids, tight lows, crisp pick attack |
+| 150–180 s | Overdriven rhythmic chops and sustained chords; sharp attack and moderate dynamic consistency |
+
+Across these sections the model described clear upper mids, lean/tight bass,
+moderate compression and subtle short room/plate ambience. Distinct delay and
+modulation were mostly absent or uncertain; doubling versus chorus/delay and
+guitar versus cymbal/vocal highs remain mixed-source ambiguities. The final
+section initially returned 503 and succeeded on the single bounded retry.
+These results are **model listening judgments**, not calibrated accuracy,
+measured EQ values, equipment identification or a verified preset match.
+
+The installed console executable was also exercised over real MCP stdio with
+the corrected credential and explicit 3.6 model: all five tools were discovered,
+`analyze_youtube` on the requested 0–30 s segment returned HTTP 200, and its
+structured listening payload passed validation. The offline suite independently
+checks missing keys, URL normalization/rejection, interval/evidence bounds and
+provider failures without network access.
+
+Sanitized full results were saved as a session artifact, not song audio/lyrics
+in the repository. Evidence timestamps in each result are relative to the
+segment's start. No user's Telecaster DI or rendered candidate preset was
+compared; practical tone matching remains to be verified with those recordings.

@@ -205,3 +205,94 @@ def test_prepared_silent_comparison_is_explicit(client, audio):
     assert result["upload_loudness_match"]["additional_gain_db_applied_to_b"] is None
     contents = client.models.generate_content.call_args.kwargs["contents"]
     assert "matching is undefined" in contents[0]
+
+
+def test_youtube_uses_bounded_url_without_files(client):
+    from tone_listener_mcp.listener import listen_youtube
+
+    result = listen_youtube("https://youtu.be/9hE5-98ZeCg?si=tracking", 12, 20, "Describe attack")
+    assert result["listening"] is not None
+    assert result["metrics"] is None
+    assert result["input_transport"] == "youtube_url"
+    assert result["source"]["url"] == "https://www.youtube.com/watch?v=9hE5-98ZeCg"
+    contents = client.models.generate_content.call_args.kwargs["contents"]
+    part = contents[1]
+    assert part.file_data.file_uri == result["source"]["url"]
+    assert part.video_metadata.start_offset == "12s"
+    assert part.video_metadata.end_offset == "20s"
+    config = client.models.generate_content.call_args.kwargs["config"]
+    assert "ONLY audible evidence" in config.system_instruction
+    assert "Ignore video images" in config.system_instruction
+    client.files.upload.assert_not_called()
+    client.files.delete.assert_not_called()
+
+
+def test_youtube_no_key_has_no_metrics(monkeypatch):
+    from tone_listener_mcp.listener import listen_youtube
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    result = listen_youtube("https://www.youtube.com/watch?v=9hE5-98ZeCg", start=10)
+    assert result["source"]["end_seconds"] == 610
+    assert result["metrics"] is None
+    assert "no local metrics" in result["listening_unavailable"]
+
+
+@pytest.mark.parametrize("url", [
+    "http://youtu.be/9hE5-98ZeCg", "https://youtube.com.evil.test/watch?v=9hE5-98ZeCg",
+    "https://www.youtube.com/playlist?list=abc", "file:///tmp/recording.wav",
+    "https://user@youtu.be/9hE5-98ZeCg", "https://youtu.be:443/9hE5-98ZeCg",
+    "https://www.youtube.com/watch?v=9hE5-98ZeCg&v=other",
+])
+def test_youtube_rejects_non_video_inputs(url):
+    from tone_listener_mcp.listener import listen_youtube
+
+    with pytest.raises(ValueError):
+        listen_youtube(url)
+
+
+@pytest.mark.parametrize("start,end", [
+    (-1, None), (0, 0), (0, 601), (float("nan"), None), (0, float("inf")),
+])
+def test_youtube_interval_bounds(start, end):
+    from tone_listener_mcp.listener import listen_youtube
+
+    with pytest.raises(ValueError):
+        listen_youtube("https://youtu.be/9hE5-98ZeCg", start, end)
+
+
+def test_youtube_provider_error_is_explicit(client):
+    from tone_listener_mcp.listener import listen_youtube
+
+    client.models.generate_content.side_effect = errors.ClientError(
+        401, {"error": {"message": "secret-key"}}
+    )
+    result = listen_youtube("https://youtu.be/9hE5-98ZeCg")
+    assert result["listening"] is None
+    assert result["metrics"] is None
+    assert result["listening_failure_stage"] == "generate"
+    assert "secret-key" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.youtube.com/watch?v=401iS5McuoU",
+    "https://www.youtube.com/shorts/401iS5McuoU",
+    "https://www.youtube.com/embed/401iS5McuoU",
+    "https://www.youtube.com/live/401iS5McuoU",
+    "https://youtu.be/401iS5McuoU",
+])
+def test_supported_youtube_forms(url, monkeypatch):
+    from tone_listener_mcp.listener import listen_youtube
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    result = listen_youtube(url, 0, 30)
+    assert result["source"]["url"] == "https://www.youtube.com/watch?v=401iS5McuoU"
+
+
+def test_youtube_evidence_bounds(client, listening_payload):
+    from tone_listener_mcp.listener import listen_youtube
+
+    listening_payload["evidence"][0]["timestamp"] = 31
+    client.models.generate_content.return_value.text = json.dumps(listening_payload)
+    result = listen_youtube("https://youtu.be/401iS5McuoU", 0, 30)
+    assert result["listening"] is None
+    assert result["listening_failure_stage"] == "validate"
