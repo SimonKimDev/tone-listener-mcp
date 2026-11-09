@@ -214,6 +214,8 @@ export function RefinementPanel({
         plan_sha256: plan.plan_sha256, max_new_requests: plan.max_new_requests, external_consent: true,
         ...(reselected ? { upload_id: reselected.id } : {}),
       });
+      // The accepted job owns the reference until its terminal cleanup, even if this panel unmounts.
+      if (fileSource) forgetUpload(false);
       const finished = await waitForJob(started, update);
       if (finished.status === "failed") show(finished.error ?? "Refinement failed.");
       applyRecords(await api.refinements(project.id));

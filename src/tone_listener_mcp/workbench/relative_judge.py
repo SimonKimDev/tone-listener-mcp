@@ -15,6 +15,7 @@ import string
 import time
 from typing import Literal
 
+import httpx
 import numpy as np
 from google import genai
 from google.genai import errors, types
@@ -180,7 +181,7 @@ def judge_relative(
             retry_options=types.HttpRetryOptions(attempts=1),
         ),
     ))
-    failures = (errors.APIError, OSError, ValueError, TimeoutError)
+    failures = (errors.APIError, httpx.TransportError, OSError, ValueError, TimeoutError)
     counts = result["request_counts"]
     names = []
     stage = "upload"

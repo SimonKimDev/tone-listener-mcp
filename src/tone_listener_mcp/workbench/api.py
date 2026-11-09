@@ -486,11 +486,14 @@ def create_app(
 
     @app.delete("/api/uploads/{upload_id}", status_code=204)
     def discard_upload(upload_id: str) -> Response:
-        try:
-            local_storage.release_upload(upload_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail="Uploaded audio was not found.") from exc
-        upload_digests.pop(upload_id, None)
+        with refinement_lock:
+            if upload_id in upload_leases:
+                raise HTTPException(status_code=409, detail="Uploaded audio is in use by a refinement.")
+            try:
+                local_storage.release_upload(upload_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="Uploaded audio was not found.") from exc
+            upload_digests.pop(upload_id, None)
         return Response(status_code=204)
 
     def _resolve_analysis_source(body: AnalysisSourceRequest):

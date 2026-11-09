@@ -406,6 +406,109 @@ def test_file_refinement_cancel_deletes_upload_without_requests(tmp_path):
     assert _uploads_left(client) == []
 
 
+@pytest.mark.parametrize("queued", [False, True])
+def test_discard_cannot_delete_a_reference_leased_by_refinement(tmp_path, queued):
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    manager = JobManager(workers=1, max_active=3)
+
+    class BlockingRenderer(RenderingFake):
+        def render(self, project, sample_name, cache_root, cancel_event=None):
+            entered.set()
+            assert release.wait(5)
+            return super().render(project, sample_name, cache_root, cancel_event)
+
+    if queued:
+        manager.submit("preview", lambda progress, cancelled: (entered.set(), release.wait(5), {})[2])
+        assert entered.wait(5)
+    judge = FakeJudge()
+    path = _reference_wav(tmp_path)
+    try:
+        client, headers, project, _ = _client(
+            tmp_path, judge, kind="audio_file",
+            content_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            renderer_class=BlockingRenderer, job_manager=manager,
+        )
+        upload = _upload(client, headers, path)
+        plan = _plan(client, headers, project, upload_id=upload).json()
+        submitted = _start(client, headers, project, plan, upload_id=upload)
+        assert submitted.status_code == 202, submitted.text
+        assert entered.wait(5)
+        discarded = client.delete(f"/api/uploads/{upload}", headers=headers)
+        assert discarded.status_code == 409, discarded.text
+        assert client.storage.get_upload(upload) is not None
+        release.set()
+        assert _wait(client, headers, submitted.json())["status"] == "completed"
+        assert len(judge.calls) == 2
+        assert _uploads_left(client) == []
+    finally:
+        release.set()
+        manager.close()
+
+
+@pytest.mark.parametrize("stage", ["upload", "generate", "cleanup"])
+def test_judge_transport_failure_preserves_accounting_and_finishes_cleanup(stage):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import httpx
+    from google.genai import types
+
+    from tone_listener_mcp.audio_io import AudioClip
+    from tone_listener_mcp.workbench import relative_judge
+
+    samples = np.sin(np.arange(16000) * 2 * np.pi * 220 / 16000)[None, :] * 0.1
+    clip = AudioClip(samples, 16000, "offline")
+    client = MagicMock()
+    client.__enter__.return_value = client
+    timeout = httpx.ReadTimeout("private transport detail")
+
+    def upload(**kwargs):
+        if stage == "upload" and client.files.upload.call_count == 2:
+            raise timeout
+        return SimpleNamespace(
+            name=f"files/{client.files.upload.call_count}", state=types.FileState.ACTIVE, uri="gs://offline",
+        )
+
+    def generate(**kwargs):
+        if stage == "generate":
+            raise timeout
+        labels = [part.split()[1] for part in kwargs["contents"]
+                  if isinstance(part, str) and part.startswith("Candidate ")]
+        return SimpleNamespace(
+            text=json.dumps({
+                "reference_guitar_audible": "clear",
+                "comparisons": [{"clip": label, **dict.fromkeys(relative_judge.RELATIVE_AXES, "similar")}
+                                for label in labels],
+                "closest_to_reference_order": labels, "closest_is_close_match": "uncertain",
+            }),
+            candidates=[], usage_metadata=None,
+        )
+
+    client.files.upload.side_effect = upload
+    client.models.generate_content.side_effect = generate
+    client.files.delete.side_effect = [timeout, None, None] if stage == "cleanup" else None
+    result = relative_judge.judge_relative(
+        model="offline", candidates={"current": clip, "variant": clip}, seed=1,
+        anchor_clip=clip, client_factory=lambda: client,
+    )
+    expected_uploads, expected_generate, expected_deletes = (2, 0, 1) if stage == "upload" else (3, 1, 3)
+    assert result["request_counts"] == {
+        "upload": expected_uploads, "generate": expected_generate,
+        "delete_upload": expected_deletes, "poll_upload": 0,
+    }
+    assert client.files.delete.call_count == expected_deletes
+    if stage == "cleanup":
+        assert result["judgment"] is not None and result["failure_info"] is None
+        assert len(result["cleanup_warnings"]) == 1
+    else:
+        assert result["failure_stage"] == stage
+        assert result["failure_info"]["exception_type"] == "ReadTimeout"
+    assert "private transport detail" not in json.dumps(result)
+
+
 def test_real_adapter_pushed_clean_amp_reproduces_development_topology(recipe_adapter):  # noqa: F811
     for key, name, category in (("tone3000:758458", "Edge candidate", "amp"),
                                 ("tone3000:383084", "Drive pedal candidate", "pedal"),

@@ -1,6 +1,10 @@
+// @vitest-environment jsdom
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { DI_SAMPLE_LABELS, DI_SAMPLES, type RefinementPlan, type RefinementRecord, type ToneProject } from "./api";
-import { adoptable, claimUpload, needsReanalysis, planMatches, startAudio } from "./RefinementPanel";
+import { api, DI_SAMPLE_LABELS, DI_SAMPLES, type JobStatus, type RefinementPlan, type RefinementRecord, type ToneProject } from "./api";
+import * as jobs from "./jobs";
+import { adoptable, claimUpload, needsReanalysis, planMatches, RefinementPanel, startAudio } from "./RefinementPanel";
 
 const project = { id: "p", revision: 3, source: { kind: "youtube" }, chain: { revision: 2, nodes: [] } } as unknown as ToneProject;
 const plan = { project_id: "p", project_revision: 3, model: "gemini-3.6-flash", samples: ["riff-1", "riff-2"] } as unknown as RefinementPlan;
@@ -38,6 +42,61 @@ describe("refinement confirmation", () => {
 });
 
 describe("refinement panel lifecycle", () => {
+  it("transfers the reference to an accepted job before the panel unmounts", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const fileProject: ToneProject = {
+      ...project, source: { ...project.source, kind: "audio_file", content_sha256: "a".repeat(64) },
+    };
+    const filePlan: RefinementPlan = {
+      ...plan, reference: { kind: "audio_file", upload_id: "reference" }, variants: [],
+      max_new_requests: 2, uploads_per_request: 3,
+    };
+    const job: JobStatus = {
+      id: "job", kind: "refinement", status: "queued", progress: 0, message: "Queued",
+    };
+    let finish!: (result: JobStatus) => void;
+    vi.spyOn(api, "refinements").mockResolvedValue([]);
+    vi.spyOn(api, "upload").mockResolvedValue({
+      upload_id: "reference", display_name: "reference.wav", duration_seconds: 10,
+      sample_rate: 16000, channels: 1, file_size_bytes: 100, intervals: [], expires_in_seconds: 1800,
+    });
+    vi.spyOn(api, "refinementPlan").mockResolvedValue(filePlan);
+    const submit = vi.spyOn(api, "refine").mockResolvedValue(job);
+    const discard = vi.spyOn(api, "discardUpload").mockResolvedValue(undefined);
+    vi.spyOn(jobs, "waitForJob").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    let unmounted = false;
+    try {
+      await act(async () => root.render(createElement(RefinementPanel, {
+        project: fileProject, dirty: false, disabled: false, onAdopted: vi.fn(),
+        guard: (callback) => callback,
+      })));
+      const file = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+      Object.defineProperty(file, "files", { value: [new File(["offline"], "reference.wav")] });
+      await act(async () => file.dispatchEvent(new Event("change", { bubbles: true })));
+      const planButton = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Plan comparison · no request",
+      )!;
+      await act(async () => planButton.click());
+      const consent = container.querySelector<HTMLInputElement>(".refine-plan input[type=checkbox]")!;
+      await act(async () => consent.click());
+      const run = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Run blinded comparison",
+      )!;
+      await act(async () => run.click());
+      expect(submit).toHaveBeenCalledOnce();
+      await act(async () => root.unmount());
+      unmounted = true;
+      expect(discard).not.toHaveBeenCalled();
+    } finally {
+      if (!unmounted) await act(async () => root.unmount());
+      if (finish) await act(async () => finish({ ...job, status: "completed" }));
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("deletes a late upload once the panel no longer owns it", () => {
     const discard = vi.fn();
     expect(claimUpload(false, "late", discard)).toBe(false);
