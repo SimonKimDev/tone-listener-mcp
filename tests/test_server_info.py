@@ -6,9 +6,20 @@ from tone_listener_mcp.server import server_info
 
 
 def info() -> dict:
-    result = server_info().model_dump()
-    assert not undeclared(ServerInfo, result)
-    return result
+    model = server_info()
+    assert isinstance(model, ServerInfo)
+    assert undeclared(model) == []
+    return model.model_dump()
+
+
+def test_undeclared_detects_extra_top_level_and_nested_keys():
+    valid = server_info().model_dump()
+    assert undeclared(ServerInfo.model_validate(valid)) == []
+    valid["request_settings"]["unexpected_nested"] = 1
+    model = ServerInfo.model_validate({**valid, "unexpected_top": True})
+    assert sorted(undeclared(model)) == [
+        ".request_settings.unexpected_nested", ".unexpected_top",
+    ]
 
 
 def test_reports_defaults_without_key():
