@@ -86,7 +86,11 @@ that every small drive increment must change a musical category. Gain-only
 tone equality requires all four comparison axes to say `similar`.
 
 Reports must be outside the repo or under gitignored `.eval/`; existing reports
-are never overwritten. Without a key the harness writes `status: "skipped"`
+are never overwritten. The report path is claimed exclusively before any request:
+an existing file or an unwritable destination fails with zero API calls. While a
+run is in progress the file holds `status: "running"` (left as-is if the process
+is killed, never a completed report); it is replaced by the full report, or
+removed when validation fails before any request. Without a key the harness writes `status: "skipped"`
 and performs **zero API calls**. A failed API response stops the budget early
 with `status: "blocked"` and a nonzero exit status. Partial results are not a
 completed benchmark, and skipped runs are not evidence of listening accuracy.
@@ -96,6 +100,105 @@ Google account and select an audio/structured-output capable model using
 The backend omits sampling overrides as required by the
 [Gemini 3.8 migration guide](https://aistudio.google.com/docs/whats-new-gemini-3.8#migrate-to-gemini-3-8-flash).
 No setting guarantees repeatable responses.
+
+Every harness run sets `TONE_LISTENER_CACHE_ENTRIES=0` for its own requests, so
+repeated judgments always reach the model rather than replaying the server's
+in-memory result cache.
+
+## Real-recording manifest evaluation (opt-in)
+
+Synthetic plucks are useful for DSP regressions, not for practical tone decisions.
+The harness also evaluates recordings listed in a JSON manifest. Build a starter
+dataset from DI performances you own:
+
+```sh
+.venv/bin/python scripts/make_validation_set.py --output /tmp/tone-dataset --seconds 8 \
+  --performance riff1=/absolute/path/riff1-di.wav \
+  --performance lead1=/absolute/path/lead1-di.wav \
+  --performance riff2=/absolute/path/riff2-di.wav \
+  --hold-out riff2
+# ID=synthetic uses a seeded synthetic phrase, e.g. for a dry run of the pipeline.
+```
+
+Each performance is rendered through the known EQ, drive, reflection and gain
+changes above, plus a **silence-padding control** (1 s leading and 2 s trailing
+silence, otherwise identical). Every other render is zero-padded to the same
+length, so the reverb tail cannot reveal the ambience answer through duration;
+only the silence-padding control differs in length. `manifest.json` lists 7 comparisons per
+performance across the tasks `eq`, `drive`, `ambience`, `level_control` and
+`silence_control`. Held-out performances also use the held-out processing
+settings. Then add any other owned recordings by hand: full mixes, no-guitar
+clips (`"expected": "uncertain"`) and deliberately ambiguous examples.
+
+```json
+{
+  "version": 1,
+  "description": "Owned DI renders and mixes",
+  "clips": {
+    "riff1/reference": {"path": "riff1/reference.wav", "performance": "riff1"},
+    "riff1/mix": {"path": "mixes/riff1-mix.wav", "performance": "riff1", "start": 2, "end": 10},
+    "talk/room": {"path": "other/room-talk.wav", "performance": "talk"},
+    "yt/cover": {"youtube": {"url": "https://youtu.be/VIDEO_ID", "start": 12, "end": 20},
+                 "performance": "riff1"}
+  },
+  "comparisons": [
+    {"id": "riff1:mix-vs-di", "a": "riff1/reference", "b": "riff1/mix",
+     "task": "full_mix", "axis": "more_ambient", "expected": "B"},
+    {"id": "talk:no-guitar", "a": "talk/room", "b": "riff1/reference",
+     "task": "no_guitar", "axis": "tone_similarity", "expected": "uncertain"},
+    {"id": "yt:cover-a", "a": "yt/cover", "b": "riff1/reference",
+     "task": "visual_bias", "axis": "brighter", "expected": "similar", "bias_group": "cover"}
+  ],
+  "splits": {"tuning": ["riff1", "talk"], "held_out": ["riff2"]}
+}
+```
+
+Validation rejects invalid JSON, `NaN`/`Infinity` or overflowing numbers anywhere
+in the manifest, a non-string description, split performance IDs or comparison
+`a`/`b`/`axis`/`expected` values that are not strings, a performance listed in
+both splits, a clip whose performance is not assigned, a comparison mixing
+splits, missing files, non-numeric or nonfinite `start`/`end`, unknown axes and
+answers that do not fit the axis. A comparison may pair clips from different
+performances in the same split. Before any
+request (and also when skipped without a key) every local clip of the selected
+splits is decoded with its `start`/`end`, so bad intervals, over-length clips,
+unsupported rates/channels and undecodable files fail up front. If a run still
+fails partway, the report is written with `status: "error"`, the judgments made
+so far and the error, and the command exits nonzero. Paths are relative to the manifest. Axes are
+`brighter`, `more_saturated`, `more_compressed`, `more_ambient` (expected `A`,
+`B`, `similar` or `uncertain`) and `tone_similarity` (`similar`, `different` or
+`uncertain`; similar only when all four axes say similar).
+
+```sh
+.venv/bin/python -m scripts.eval_listening --manifest /tmp/tone-dataset/manifest.json \
+  --env-file ~/.config/tone-listener-mcp/env \
+  --split tuning --repeats 1 --report .eval/manifest-tuning.json
+```
+
+Local pairs are RMS-matched over active regions and presented in both A/B orders
+with neutral labels; a YouTube clip can only be reference A, is never swapped and
+is not loudness-matched. `max_requests` in the report (also written when skipped
+without a key) is the generation-call budget: comparisons in the split x orders x
+`--repeats` (1-5 for manifests). Reports include accuracy per task, abstention
+rate (`uncertain` answers among available answers), A/B order consistency,
+sample counts (judgments, comparisons, performances) and the manifest SHA-256.
+Each row records the performances of both clips, and performance counts are the
+union of both sources, whichever clip was presented first.
+
+**Visual bias.** Gemini's YouTube input includes images. To test whether
+answers depend on them, upload the *same audio* under different imagery or gear
+labels, list each upload as a clip and give their comparisons the same
+`bias_group`. Within a group only answers to the same question (same axis and
+candidate B, per repeat) are compared. Bias consistency is the fraction of such
+groups whose answers are identical and neither `uncertain` nor unavailable,
+matching order consistency; `bias_groups_with_abstention` and
+`bias_groups_with_unavailable` count the groups excluded for those reasons.
+Inconsistency shows visual influence, while consistency
+is necessary but not sufficient evidence of audio-only judgment.
+
+No manifest evaluation has been run yet; practical listening accuracy on real
+guitar recordings remains **unmeasured**. Publish a report only together with
+its manifest, the recordings' licenses and the exact revision.
 
 ## Offline feedback findings (2026-11-08)
 
