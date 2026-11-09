@@ -35,6 +35,14 @@ def test_stdio_tools(tmp_path):
             assert {tool.name for tool in tools.tools} == {
                 "server_info", "audio_metrics", "analyze_audio", "compare_audio", "analyze_youtube"
             }
+            schemas = {tool.name: tool.output_schema for tool in tools.tools}
+            compare_schema = schemas["compare_audio"]
+            assert {"loudness_match", "deltas_b_minus_a", "eq_direction_hints", "listening"} <= set(
+                compare_schema["properties"]
+            )
+            assert "EqHint" in compare_schema["$defs"] and "Adjustment" in compare_schema["$defs"]
+            assert "spectrum" in schemas["audio_metrics"]["properties"]
+            assert "source" in schemas["analyze_youtube"]["properties"]
             info = await session.call_tool("server_info")
             assert not info.is_error
             assert info.structured_content["name"] == "tone-listener-mcp"
