@@ -1,11 +1,17 @@
 name: CI
 
 on:
+  pull_request:
   push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -28,3 +34,27 @@ jobs:
         run: python -m pytest -q
         env:
           GEMINI_API_KEY: ""
+
+  # Required status check for main. always() ensures this job reports a
+  # failure (not a skip, which would count as passing) when a leg fails or is cancelled.
+  ci-passed:
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every needed job to succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Needed job results: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "::error::No needed job results were reported"
+            exit 1
+          fi
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required job finished with result '$result'"
+              exit 1
+            fi
+          done
