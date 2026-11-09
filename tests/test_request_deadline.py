@@ -5,6 +5,7 @@ without credentials or provider calls.
 """
 
 import json
+import math
 import select
 import socket
 import threading
@@ -33,6 +34,12 @@ from tone_listener_mcp.listener import (
     listen_comparison,
     listen_youtube,
 )
+
+# Loopback tests use the real clock. On a coarse clock (Windows Python 3.12 ticks at 1/64 s)
+# a socket wait clamped to the budget can end while the clock still reads up to one tick
+# short of the deadline, so lower bounds allow a tick of slack; upper bounds allow a slow
+# runner 1.5 s over the deadline.
+TICK_SLACK = 0.1
 
 YOUTUBE = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -222,7 +229,7 @@ def test_slow_response_body_hits_total_deadline_and_is_not_cached(gemini):
     started = time.monotonic()
     result = listen_youtube(YOUTUBE, 0, 1)
     elapsed = time.monotonic() - started
-    assert 1 <= elapsed < 2.5
+    assert 1 - TICK_SLACK <= elapsed < 2.5
     assert result["listening"] is None
     assert result["failure"]["category"] == "deadline"
     assert result["listening_failure_stage"] == "generate"
@@ -240,13 +247,14 @@ def test_slow_response_body_hits_total_deadline_and_is_not_cached(gemini):
 
 def test_cumulative_upload_requests_hit_deadline_and_cleanup_runs(gemini, audio):
     # No read is ever idle long enough for an inactivity timeout, yet the four upload
-    # requests together need ~3.6 s against a 1 s deadline.
-    gemini.upload_delay = 0.2
+    # requests together need ~3.4 s against a 1 s deadline. The first file is ready after
+    # ~0.2 s, leaving a slow runner most of the budget to finish it.
+    gemini.upload_delay = 0.1
     gemini.drip_uploads_from = 1
     started = time.monotonic()
     result = listen_comparison(audio, audio)
     elapsed = time.monotonic() - started
-    assert 1 <= elapsed < 2.5
+    assert 1 - TICK_SLACK <= elapsed < 2.5
     assert result["failure"]["category"] == "deadline"
     assert result["listening_failure_stage"] == "upload"
     assert gemini.count("generateContent") == 0
@@ -263,7 +271,7 @@ def test_youtube_retries_share_the_total_deadline(gemini, monkeypatch):
     result = listen_youtube(YOUTUBE, 0, 1)
     elapsed = time.monotonic() - started
     assert gemini.count("generateContent") == 2
-    assert 2.9 < elapsed < 4.5
+    assert 3 - TICK_SLACK <= elapsed < 4.5
     assert result["failure"]["category"] == "deadline"
     assert_released(gemini)
 
@@ -290,8 +298,13 @@ def test_cleanup_has_its_own_bounded_budget(gemini, audio, monkeypatch):
     assert result["failure"]["category"] == "capacity"
     deleted = [path.rsplit("/", 1)[1] for method, path in gemini.requests if method == "DELETE"]
     assert deleted == ["a0", "a1"]
-    assert result["cleanup_warnings"] == ["Remote upload cleanup failed (DeadlineExceeded)"]
-    assert 0.5 <= elapsed < 2.5
+    # The drip never trips the 0.5 s per-read timeout, so only the cleanup budget ends the
+    # delete. A lagging clock can surface the clamped socket timeout instead of the deadline.
+    assert result["cleanup_warnings"] in (
+        ["Remote upload cleanup failed (DeadlineExceeded)"],
+        ["Remote upload cleanup failed (ReadTimeout)"],
+    )
+    assert 0.5 - TICK_SLACK <= elapsed < 2.5
     assert_released(gemini)
 
 
@@ -321,22 +334,67 @@ def test_success_completing_after_deadline_is_rejected_and_not_cached(monkeypatc
     assert listen(audio)["diagnostics"]["cache"] == "miss"
 
 
+class FakeClock:
+    """Monotonic clock for the listener module only; reads can be quantized to ``tick``.
+
+    Windows Python 3.12 ``time.monotonic`` advances in 1/64 s steps while socket waits are
+    precise, so a read just after a clamped wait can still lag behind the deadline.
+    """
+
+    def __init__(self, tick: float | None = None, offset: float = 0.0,
+                 origin: float = 1000.0) -> None:
+        self.tick = tick
+        self.now = origin + offset * (tick or 0.0)
+
+    def monotonic(self) -> float:
+        if self.tick is None:
+            return self.now
+        return math.floor(self.now / self.tick) * self.tick
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    def install(tick: float | None = None, offset: float = 0.0,
+                origin: float = 1000.0) -> FakeClock:
+        fake = FakeClock(tick, offset, origin)
+        monkeypatch.setattr(listener, "time", SimpleNamespace(
+            monotonic=fake.monotonic, sleep=fake.sleep
+        ))
+        return fake
+
+    return install
+
+
 class StubBackend:
     """Network backend stand-in: no sockets, scripted outcome per address."""
 
-    def __init__(self, outcomes: dict) -> None:
+    def __init__(self, outcomes: dict, clock: FakeClock | None = None) -> None:
         self.outcomes = outcomes
-        self.attempts: list[tuple[str, float]] = []
+        self.clock = clock
+        # (host, timeout handed to the backend, clock reading when the attempt started)
+        self.attempts: list[tuple[str, float, float | None]] = []
 
     def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
-        self.attempts.append((host, timeout))
+        self.attempts.append((host, timeout, self.clock.monotonic() if self.clock else None))
         outcome = self.outcomes[host]
         if outcome == "blackhole":
-            time.sleep(timeout)
+            # A black-holed connect waits out its whole timeout.
+            self.clock.sleep(timeout)
             raise httpcore2.ConnectTimeout("timed out")
         if outcome == "refused":
             raise httpcore2.ConnectError("refused")
         return outcome
+
+    @property
+    def hosts(self) -> list[str]:
+        return [host for host, _, _ in self.attempts]
+
+    @property
+    def timeouts(self) -> list[float]:
+        return [timeout for _, timeout, _ in self.attempts]
 
 
 @pytest.fixture
@@ -355,30 +413,73 @@ def resolve(monkeypatch):
     return install
 
 
-def test_blackholed_addresses_share_one_connect_deadline(resolve):
+BLACKHOLED = [f"192.0.2.{n}" for n in range(1, 9)]
+CONNECT_TIMEOUT = 0.5
+CONNECT_BUDGET = 0.8
+# Budgets are float differences (0.8 - 0.5 == 0.30000000000000004, and larger at big clock
+# origins), so every comparison with a decimal literal allows this much rounding.
+EPS = 1e-9
+# 1/64 s is the Windows Python 3.12 monotonic tick; offsets place the start inside a tick.
+# Origin 100000 reproduces the reviewed Windows failure (second timeout 0.3000000000029104).
+QUANTIZED_CLOCKS = [
+    pytest.param(1 / 64, offset, origin, id=f"tick64-{offset}-at{origin:g}")
+    for origin in (1000.0, 100000.0) for offset in (0, 0.25, 0.5, 0.75)
+] + [
+    pytest.param(0.05, offset, 1000.0, id=f"tick50ms-{offset}") for offset in (0, 0.5)
+]
+
+
+@pytest.mark.parametrize("origin", [1000.0, 100000.0])
+def test_blackholed_addresses_share_one_connect_deadline(resolve, clock, origin):
     # create_connection would give each of the eight addresses the full 0.5 s (4 s in total).
-    addresses = [f"192.0.2.{n}" for n in range(1, 9)]
-    resolve(*addresses)
-    stub = StubBackend(dict.fromkeys(addresses, "blackhole"))
-    backend = _DeadlineBackend(stub, _Deadline(time.monotonic() + 0.8))
-    started = time.monotonic()
+    fake = clock(origin=origin)
+    resolve(*BLACKHOLED)
+    stub = StubBackend(dict.fromkeys(BLACKHOLED, "blackhole"), fake)
+    started = fake.now
+    backend = _DeadlineBackend(stub, _Deadline(fake.monotonic() + CONNECT_BUDGET))
     with pytest.raises(DeadlineExceeded):
-        backend.connect_tcp("gemini.test", 443, timeout=0.5)
-    elapsed = time.monotonic() - started
-    assert 0.75 < elapsed < 0.8 + 1.5
-    assert [host for host, _ in stub.attempts] == addresses[:2]
-    assert stub.attempts[0][1] == 0.5
-    assert stub.attempts[1][1] <= 0.3
+        backend.connect_tcp("gemini.test", 443, timeout=CONNECT_TIMEOUT)
+    assert stub.hosts == BLACKHOLED[:2]
+    assert stub.timeouts == [
+        CONNECT_TIMEOUT, pytest.approx(CONNECT_BUDGET - CONNECT_TIMEOUT, abs=EPS)
+    ]
+    assert fake.now - started == pytest.approx(CONNECT_BUDGET, abs=EPS)
 
 
-def test_connect_falls_through_to_a_later_address(resolve):
+@pytest.mark.parametrize(("tick", "offset", "origin"), QUANTIZED_CLOCKS)
+def test_blackholed_addresses_stay_within_deadline_on_a_coarse_clock(resolve, clock, tick,
+                                                                   offset, origin):
+    # A lagging clock may allow extra tiny attempts, but never more than one tick of budget.
+    fake = clock(tick, offset, origin)
+    resolve(*BLACKHOLED)
+    stub = StubBackend(dict.fromkeys(BLACKHOLED, "blackhole"), fake)
+    deadline = _Deadline(fake.monotonic() + CONNECT_BUDGET)
+    with pytest.raises(DeadlineExceeded):
+        _DeadlineBackend(stub, deadline).connect_tcp("gemini.test", 443, timeout=CONNECT_TIMEOUT)
+    assert len(stub.attempts) >= 2
+    assert stub.hosts == BLACKHOLED[:len(stub.attempts)]
+    assert stub.timeouts[0] == CONNECT_TIMEOUT
+    for _, timeout, read in stub.attempts:
+        # Never more than the budget the clock showed when the attempt started.
+        assert 0 < timeout <= deadline.at - read + EPS
+    assert sum(stub.timeouts) <= CONNECT_BUDGET + tick + EPS
+
+
+@pytest.mark.parametrize(("tick", "offset", "origin"),
+                         [pytest.param(None, 0, 1000.0, id="ideal"), *QUANTIZED_CLOCKS])
+def test_connect_falls_through_to_a_later_address(resolve, clock, tick, offset, origin):
+    fake = clock(tick, offset, origin)
     resolve("2001:db8::1", "192.0.2.1", "192.0.2.2")
     stream = object()
-    stub = StubBackend({"2001:db8::1": "refused", "192.0.2.1": "blackhole", "192.0.2.2": stream})
-    backend = _DeadlineBackend(stub, _Deadline(time.monotonic() + 5))
-    connected = backend.connect_tcp("gemini.test", 443, timeout=0.2)
+    stub = StubBackend(
+        {"2001:db8::1": "refused", "192.0.2.1": "blackhole", "192.0.2.2": stream}, fake
+    )
+    backend = _DeadlineBackend(stub, _Deadline(fake.monotonic() + CONNECT_BUDGET))
+    connected = backend.connect_tcp("gemini.test", 443, timeout=CONNECT_TIMEOUT)
     assert isinstance(connected, listener._DeadlineStream) and connected._stream is stream
-    assert [host for host, _ in stub.attempts] == ["2001:db8::1", "192.0.2.1", "192.0.2.2"]
+    assert stub.hosts == ["2001:db8::1", "192.0.2.1", "192.0.2.2"]
+    assert stub.timeouts[:2] == [CONNECT_TIMEOUT, CONNECT_TIMEOUT]
+    assert 0 < stub.timeouts[2] <= CONNECT_BUDGET - CONNECT_TIMEOUT + (tick or 0) + EPS
 
 
 def test_connect_reraises_the_last_error_when_every_address_fails(resolve):
@@ -399,7 +500,7 @@ def test_resolution_failure_keeps_the_backend_error(monkeypatch):
     backend = _DeadlineBackend(stub, _Deadline(time.monotonic() + 5))
     with pytest.raises(httpcore2.ConnectError):
         backend.connect_tcp("gemini.test", 443, timeout=1)
-    assert [host for host, _ in stub.attempts] == ["gemini.test"]
+    assert stub.hosts == ["gemini.test"]
 
 
 def test_missing_pool_internals_fail_closed_as_local_io(monkeypatch, audio):
