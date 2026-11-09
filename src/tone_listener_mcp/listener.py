@@ -42,6 +42,9 @@ HTTP_ERRORS: tuple[type[Exception], ...] = (httpx.HTTPError,) + (
 HTTP_TIMEOUTS: tuple[type[Exception], ...] = (httpx.TimeoutException,) + (
     (httpx2.TimeoutException,) if httpx2 is not None else ()
 )
+HTTP_TRANSIENT: tuple[type[Exception], ...] = HTTP_TIMEOUTS + (httpx.ConnectError,) + (
+    (httpx2.ConnectError,) if httpx2 is not None else ()
+)
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 logger = logging.getLogger(__name__)
@@ -124,12 +127,124 @@ DEFAULT_MAX_CONCURRENT_REQUESTS = 2
 DEFAULT_CACHE_ENTRIES = 64
 CLEANUP_TIMEOUT_SECONDS = 10.0
 UPLOAD_PROCESSING_SECONDS = 30.0
+YOUTUBE_RETRY_DELAY_SECONDS = 1.0
 
 Progress = Callable[[float, "float | None", str], None]
 
 
 class ListeningBusy(Exception):
     """No inference slot became free before the request deadline."""
+
+
+class DeadlineExceeded(TimeoutError):
+    """The total request (or cleanup) budget ran out during network I/O.
+
+    Deliberately not an httpx timeout, so SDK retry logic never treats it as transient.
+    """
+
+
+class _Deadline:
+    """A mutable absolute deadline that clamps every socket operation's timeout."""
+
+    def __init__(self, at: float) -> None:
+        self.at = at
+
+    def clamp(self, timeout: float | None) -> float:
+        budget = self.at - time.monotonic()
+        if budget <= 0:
+            raise DeadlineExceeded("Listening deadline exceeded")
+        return budget if timeout is None else min(timeout, budget)
+
+    def run(self, operation: Callable[[float], object], timeout: float | None):
+        try:
+            return operation(self.clamp(timeout))
+        except Exception:
+            self.clamp(None)  # Report an exhausted budget as the deadline, not a socket error.
+            raise
+
+
+_WRITE_SLICE_BYTES = 64 * 1024
+
+
+class _DeadlineStream:
+    """httpcore network stream whose reads, writes and TLS handshakes honour a deadline.
+
+    SDK and HTTP timeouts are per-operation inactivity limits, so a slowly dripping body or
+    a sequence of requests could otherwise run far past the advertised total budget.
+    """
+
+    def __init__(self, stream, deadline: _Deadline) -> None:
+        self._stream = stream
+        self._deadline = deadline
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self._deadline.run(lambda budget: self._stream.read(max_bytes, budget), timeout)
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        # Slice large upload bodies so the deadline is re-checked while sending them.
+        view = memoryview(buffer)
+        for offset in range(0, len(view), _WRITE_SLICE_BYTES) or [0]:
+            part = bytes(view[offset:offset + _WRITE_SLICE_BYTES])
+            self._deadline.run(lambda budget, part=part: self._stream.write(part, budget), timeout)
+
+    def close(self) -> None:
+        self._stream.close()
+
+    def start_tls(self, ssl_context, server_hostname=None, timeout: float | None = None):
+        stream = self._deadline.run(
+            lambda budget: self._stream.start_tls(ssl_context, server_hostname, budget), timeout
+        )
+        return _DeadlineStream(stream, self._deadline)
+
+    def get_extra_info(self, info: str):
+        return self._stream.get_extra_info(info)
+
+
+class _DeadlineBackend:
+    """httpcore network backend wrapper returning deadline-aware streams."""
+
+    def __init__(self, backend, deadline: _Deadline) -> None:
+        self._backend = backend
+        self._deadline = deadline
+
+    def connect_tcp(
+        self, host, port, timeout=None, local_address=None, socket_options=None
+    ) -> _DeadlineStream:
+        stream = self._deadline.run(
+            lambda budget: self._backend.connect_tcp(
+                host, port, budget, local_address, socket_options
+            ),
+            timeout,
+        )
+        return _DeadlineStream(stream, self._deadline)
+
+    def connect_unix_socket(self, path, timeout=None, socket_options=None) -> _DeadlineStream:
+        stream = self._deadline.run(
+            lambda budget: self._backend.connect_unix_socket(path, budget, socket_options),
+            timeout,
+        )
+        return _DeadlineStream(stream, self._deadline)
+
+    def sleep(self, seconds: float) -> None:
+        self._backend.sleep(seconds)
+
+
+def _deadline_http_client(deadline: _Deadline):
+    """An SDK-compatible HTTP client whose connection pools all enforce ``deadline``.
+
+    Uses the backend google-genai would pick (httpx2 when installed), keeps environment proxy
+    and certificate handling, and wraps every pool's network backend.
+    """
+    module = httpx2 if httpx2 is not None else httpx
+    client = module.Client(follow_redirects=True)
+    transports = [client._transport, *client._mounts.values()]
+    pools = [getattr(transport, "_pool", None) for transport in transports if transport]
+    if not pools or any(pool is None or not hasattr(pool, "_network_backend") for pool in pools):
+        client.close()
+        raise RuntimeError("HTTP client internals changed; cannot enforce the request deadline")
+    for pool in pools:
+        pool._network_backend = _DeadlineBackend(pool._network_backend, deadline)
+    return client
 
 
 FAILURE_SUGGESTIONS = {
@@ -497,6 +612,8 @@ def _request(
             return finish()
         diagnostics["cache"] = "miss"
     youtube_attempts = 2
+    deadline = _Deadline(deadline_at)
+    http_client = None
     stage = "queue"
     slots = _inference_slots(settings["max_concurrent_requests"])
     try:
@@ -507,18 +624,18 @@ def _request(
     try:
         stage = "create_client"
         try:
+            # SDK retries are disabled: their backoff sleeps ignore the deadline, so the
+            # YouTube 503 retry below is deadline-aware instead.
+            http_client = _deadline_http_client(deadline)
             client_instance = genai.Client(
                 api_key=api_key,
                 http_options=types.HttpOptions(
                     timeout=120000 if youtube_part is not None else 60000,
                     api_version="v1beta" if youtube_part is not None else None,
-                    retry_options=types.HttpRetryOptions(
-                        attempts=youtube_attempts, initial_delay=1, max_delay=3,
-                        http_status_codes=[503],
-                    ) if youtube_part is not None else None,
+                    httpx_client=http_client,
                 ),
             )
-        except failure_types as exc:
+        except (*failure_types, RuntimeError) as exc:
             return finish(exc, stage)
         with client_instance as client:
             names: list[str] = []
@@ -549,7 +666,7 @@ def _request(
                     while uploaded.state == types.FileState.PROCESSING:
                         if time.monotonic() >= processing_until:
                             raise TimeoutError("Audio upload processing timed out")
-                        time.sleep(0.5)
+                        time.sleep(min(0.5, remaining()))
                         uploaded = client.files.get(
                             name=uploaded.name,
                             config=types.GetFileConfig(http_options=call_options(remaining())),
@@ -562,18 +679,29 @@ def _request(
                     )
                     advance(f"Uploaded clip {labels[index]}")
                 stage = "generate"
-                response = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=instructions,
-                        response_mime_type="application/json",
-                        response_schema=schema,
-                        http_options=call_options(
-                            remaining(), youtube_attempts if youtube_part is not None else 1
-                        ),
-                    ),
-                )
+                attempts = youtube_attempts if youtube_part is not None else 1
+                for attempt in range(attempts):
+                    try:
+                        response = client.models.generate_content(
+                            model=model,
+                            contents=contents,
+                            config=types.GenerateContentConfig(
+                                system_instruction=instructions,
+                                response_mime_type="application/json",
+                                response_schema=schema,
+                                http_options=call_options(remaining(), attempts - attempt),
+                            ),
+                        )
+                        break
+                    except (errors.APIError, *HTTP_TRANSIENT) as exc:
+                        retryable = not isinstance(exc, errors.APIError) or exc.code == 503
+                        # Only retry when the backoff still leaves budget for another attempt.
+                        if not retryable or attempt + 1 == attempts or (
+                            deadline_at - time.monotonic() <= YOUTUBE_RETRY_DELAY_SECONDS + 1
+                        ):
+                            raise
+                        time.sleep(YOUTUBE_RETRY_DELAY_SECONDS)
+                remaining()  # A response that completed after the deadline is not accepted.
                 diagnostics["usage"] = _usage(response)
                 if not response.text:
                     raise ValueError("Gemini returned no listening response")
@@ -587,6 +715,7 @@ def _request(
                     item.timestamp > duration for item in parsed.evidence
                 ):
                     raise ValueError("Evidence timestamp exceeds selected clip duration")
+                remaining()  # Never accept or cache a success after the deadline.
                 result["listening"] = parsed.model_dump(mode="json")
                 if key is not None:
                     _cache.put(
@@ -600,7 +729,9 @@ def _request(
             finally:
                 for name in names:
                     try:
-                        # Cleanup runs even after the deadline so uploads are not left behind.
+                        # Cleanup runs even after the deadline so uploads are not left behind,
+                        # with its own total budget per file.
+                        deadline.at = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
                         client.files.delete(
                             name=name,
                             config=types.DeleteFileConfig(http_options=types.HttpOptions(
@@ -613,6 +744,8 @@ def _request(
                         logger.warning("%s", warning)
                         result["cleanup_warnings"].append(warning)
     finally:
+        if http_client is not None:
+            http_client.close()
         slots.release()
     if result["listening"] is not None:
         advance("Validated listening response")

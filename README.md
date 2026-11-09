@@ -279,12 +279,21 @@ Categories: `not_configured`, `audio_preparation`, `authentication` (401), `perm
 `provider_error`, `network`, `deadline`, `busy`, `upload_failed`, `invalid_response` and
 `local_io`. Suggestions are fixed text; provider messages are never returned.
 
-One deadline (`TONE_LISTENER_REQUEST_DEADLINE_SECONDS`) bounds waiting for an inference slot,
-each upload, upload processing (also capped at 30 s) and generation: every provider call's
-HTTP timeout is the remaining budget. Remote upload cleanup always runs afterwards, even past
-the deadline, with its own 10 s timeout per file, so a slow cleanup can extend a call slightly.
+One deadline (`TONE_LISTENER_REQUEST_DEADLINE_SECONDS`) bounds the total elapsed time of
+waiting for an inference slot, each upload, upload processing (also capped at 30 s) and
+generation. It is enforced on every socket connect, TLS handshake, read and write of every
+provider request, including the YouTube 503 retry, so a slowly streamed response or a series of
+individually quick requests still stops at the deadline with category `deadline`. A response
+that completes after the deadline is never returned or cached. The YouTube retry (one, after
+1 s) only happens if at least 1 s of budget would remain. Remote upload cleanup always runs
+afterwards, even past the deadline, with its own 10 s total budget per file, so cleanup can
+extend a call by at most 10 s per uploaded file. Not covered: DNS resolution, which cannot be
+interrupted, and the SDK's internal resumable-upload backoff (only used when the server omits the
+upload status), whose sleep can delay the `deadline` failure until the next socket operation.
 When all `TONE_LISTENER_MAX_CONCURRENT_REQUESTS` slots stay busy until the deadline, the
-result fails with category `busy` at stage `queue` without uploading anything.
+result fails with category `busy` at stage `queue` without uploading anything. A slot is held
+until the request, including its cleanup, has fully finished, so no provider request outlives
+the call.
 
 Every listening result includes `diagnostics`: `elapsed_seconds`, `deadline_seconds`,
 `max_concurrent_requests`, `prompt_version`, `schema_version` (response schema name plus a
