@@ -126,7 +126,6 @@ def test_literal_credentials(tmp_path, monkeypatch):
     path.write_text('# comments\nGEMINI_API_KEY="test-key"\nTONE_LISTENER_MODEL=test-model\n')
     path.chmod(0o600)
     load_credentials(path)
-    import os
 
     assert os.environ["GEMINI_API_KEY"] == "test-key"
     monkeypatch.delenv("GEMINI_API_KEY")
@@ -148,12 +147,19 @@ def test_credentials_reject_unsafe_or_empty_entries(tmp_path, text):
         load_credentials(path)
 
 
-def test_credentials_reject_public_permissions(tmp_path):
+def test_credentials_permission_check_is_posix_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     path = tmp_path / "env"
     path.write_text("GEMINI_API_KEY=test")
     path.chmod(0o644)
-    with pytest.raises(ValueError, match="0600"):
+    if os.name == "nt":
         load_credentials(path)
+        assert os.environ["GEMINI_API_KEY"] == "test"
+        monkeypatch.delenv("GEMINI_API_KEY")
+    else:
+        with pytest.raises(ValueError, match="0600"):
+            load_credentials(path)
+        assert "GEMINI_API_KEY" not in os.environ
 
 
 def build_manifest(tmp_path):

@@ -47,9 +47,11 @@ GAIN_RANK = {
 
 def load_credentials(path: Path) -> None:
     """Read literal KEY=value entries, never source or execute config text."""
-    info = path.stat()
-    if stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.getuid():
-        raise ValueError("Credential file must be owned by the current user with mode 0600")
+    # Windows has no POSIX owner/mode bits; rely on the user profile ACLs there.
+    if os.name != "nt":
+        info = path.stat()
+        if stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.getuid():
+            raise ValueError("Credential file must be owned by the current user with mode 0600")
     allowed = {"GEMINI_API_KEY", "TONE_LISTENER_MODEL", "TONE_LISTENER_MAX_SECONDS"}
     entries = {}
     for number, line in enumerate(path.read_text().splitlines(), 1):

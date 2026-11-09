@@ -58,7 +58,9 @@ Never paste the key into reports, commit it, or enable shell tracing.
 
 `--env-file` parses only literal allowed `KEY=value` entries with optional outer
 quotes and comments; unmatched quotes are rejected so a malformed key is never sent.
-It requires mode 0600 and current-user ownership. It never
+On POSIX it requires mode 0600 and current-user ownership; Windows has no
+equivalent mode bits, so there the check is skipped and you should keep the file
+in your user profile. It never
 sources/executes the file or expands shell expressions. Exported variables remain
 supported when the option is omitted. Keys never enter reports or CLI arguments.
 
