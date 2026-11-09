@@ -628,9 +628,13 @@ def _request(
         key = _cache_key(model, prompt, instructions, schema, youtube_part, clips)
         cached = _cache.get(key)
         if cached is not None:
+            diagnostics["cache"] = "hit"
+            try:
+                remaining()  # A cached result is not returned after the deadline either.
+            except TimeoutError as exc:
+                return finish(exc, "queue")  # Same failure as a miss; the entry is kept.
             result["listening"] = cached["listening"]
             diagnostics["usage"] = cached["usage"]
-            diagnostics["cache"] = "hit"
             step = steps - 1
             advance("Served from cache")
             return finish()

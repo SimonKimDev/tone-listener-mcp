@@ -285,12 +285,16 @@ generation. It is enforced on every socket connect, TLS handshake, read and writ
 provider request, including the YouTube 503 retry, so a slowly streamed response or a series of
 individually quick requests still stops at the deadline with category `deadline`. When a host
 resolves to several addresses, they are tried in order and share that one deadline, rather than
-each getting a full connect timeout. A response that completes after the deadline is never
-returned or cached. The YouTube retry (one, after 1 s, on a 503 or a transient connect/timeout
-error) only covers the generate request, and only happens if at least 1 s of budget would remain;
-uploads, upload status checks and deletes are not retried. Remote upload cleanup always runs
-afterwards, even past the deadline, with its own 10 s total budget per file, so cleanup can
-extend a call by at most 10 s per uploaded file.
+each getting a full connect timeout. A listening result is never accepted after the deadline,
+whether it comes from the provider or the cache: a provider response that completes late is
+neither returned nor cached, and a cache hit found after the budget is spent (for example by
+slow audio preparation) fails with `deadline` at stage `queue`, exactly like a miss, while
+the cached entry stays valid for later requests. The YouTube retry (one, after 1 s, on a 503
+or a transient connect/timeout error) only covers the generate request, and only happens if at
+least 1 s of budget would remain; uploads, upload status checks and deletes are not retried.
+Remote upload cleanup always runs afterwards, even past the deadline, with its own 10 s total
+budget per file, so cleanup can extend a call by at most 10 s per uploaded file (including
+returning a result that was accepted before the deadline).
 The deadline is enforced by wrapping the connection pools of a per-request httpx2 client passed
 to google-genai, which relies on private httpx2/httpcore2 internals (`_transport`, `_mounts`,
 `_pool._network_backend`). If those change in a new httpx2 release, listening fails closed with
@@ -310,7 +314,8 @@ the call.
 Every listening result includes `diagnostics`: `elapsed_seconds`, `deadline_seconds`,
 `max_concurrent_requests`, `prompt_version`, `schema_version` (response schema name plus a
 hash of its JSON schema), `cache` (`hit`, `miss`, `disabled` or `not_used` when no request
-was attempted), provider token `usage` when reported, and `preprocessing` per uploaded clip
+was attempted; a `hit` with a `deadline` failure means a matching cached result was found but
+not returned because the deadline had passed), provider token `usage` when reported, and `preprocessing` per uploaded clip
 (original sample rate/channels/duration and the 16 kHz mono upload format).
 
 Successful, validated results are cached in memory for the life of the server process.

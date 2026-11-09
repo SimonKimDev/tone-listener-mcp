@@ -529,3 +529,70 @@ def test_missing_pool_internals_fail_closed_as_local_io(monkeypatch, audio):
     assert result["failure"]["category"] == "local_io"
     assert result["listening_failure_stage"] == "create_client"
     created.assert_not_called()
+
+
+@pytest.fixture
+def mocked_gemini(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    mocked = MagicMock()
+    mocked.__enter__.return_value = mocked
+    mocked.files.upload.return_value = SimpleNamespace(
+        name="files/test", uri="https://example.invalid/audio", state=types.FileState.ACTIVE
+    )
+    mocked.models.generate_content.return_value = SimpleNamespace(
+        text=json.dumps(PAYLOAD), usage_metadata=USAGE
+    )
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", lambda **kwargs: mocked)
+    return mocked
+
+
+def slow_preparation(monkeypatch, fake: FakeClock) -> dict:
+    """Make audio preparation take ``delay["seconds"]`` of fake time per clip."""
+    delay = {"seconds": 0.0}
+    prepare = listener.prepare_upload
+
+    def slow(clip):
+        fake.sleep(delay["seconds"])
+        return prepare(clip)
+
+    monkeypatch.setattr(listener, "prepare_upload", slow)
+    return delay
+
+
+def test_cache_hit_is_not_returned_after_the_deadline(monkeypatch, clock, audio, mocked_gemini):
+    fake = clock()
+    delay = slow_preparation(monkeypatch, fake)
+    monkeypatch.setenv("TONE_LISTENER_REQUEST_DEADLINE_SECONDS", "3")
+    warm = listen(audio)
+    assert warm["failure"] is None and warm["diagnostics"]["cache"] == "miss"
+    monkeypatch.setenv("TONE_LISTENER_REQUEST_DEADLINE_SECONDS", "1")
+
+    delay["seconds"] = 0.6
+    hit = listen(audio)
+    assert hit["failure"] is None and hit["listening"] == warm["listening"]
+    assert hit["diagnostics"]["cache"] == "hit"
+
+    delay["seconds"] = 1.1
+    rejected = listen(audio)
+    assert rejected["listening"] is None
+    assert rejected["failure"]["category"] == "deadline"
+    assert rejected["listening_failure_stage"] == "queue"
+    assert rejected["diagnostics"]["cache"] == "hit"
+    assert rejected["diagnostics"]["usage"] is None
+    assert rejected["diagnostics"]["elapsed_seconds"] >= 1
+
+    delay["seconds"] = 0.0
+    served = listen(audio)
+    assert served["failure"] is None and served["listening"] == warm["listening"]
+    assert served["diagnostics"]["cache"] == "hit"
+    assert mocked_gemini.models.generate_content.call_count == 1
+
+    # A cold cache with the same spent budget fails identically, without any provider call.
+    listener.clear_listening_cache()
+    delay["seconds"] = 1.1
+    cold = listen(audio)
+    assert cold["diagnostics"]["cache"] == "miss"
+    for field in ("listening", "failure", "listening_unavailable", "listening_failure_stage"):
+        assert cold[field] == rejected[field]
+    assert mocked_gemini.files.upload.call_count == 1
+    assert mocked_gemini.models.generate_content.call_count == 1
