@@ -286,7 +286,13 @@ This excerpt describes B at half A's amplitude. Deltas use **B minus A**;
 positive band deltas mean relatively more energy in B. Band hints are non-causal
 observations: saturation harmonics, playing and ambience can also change them.
 They suggest an EQ direction **only if EQ is the cause**, not a distortion
-diagnosis, exact knob settings or proof that EQ will recreate A. Silence makes RMS
+diagnosis, exact knob settings or proof that EQ will recreate A. Hints need
+evidence: `deltas_b_minus_a.band_evidence` marks each band `sufficient`,
+`insufficient_energy` (below -50 dB relative in both A and B, where tiny absolute
+changes give unstable ratios) or `unavailable` (above Nyquist, or every band when A
+and B have different Nyquist frequencies). Raw deltas are still reported for
+every band, but only `sufficient` bands with at least 1 dB of change produce
+hints. Silence makes RMS
 matching undefined and is explicitly reported. Stereo deltas require two stereo
 clips. Gemini compares both uploads in one request and returns differences,
 which clip is brighter/more saturated/more compressed/more ambient, suggested

@@ -34,6 +34,19 @@ MATCHING_METHODS = {
     "whole": "Whole-clip RMS, including silence and tails",
 }
 MISMATCH_TOLERANCE = 0.1
+# Bands below this relative energy (dB re: total spectral energy) in both A and B are
+# numerically unstable: tiny absolute changes produce large ratios, so they get no hints.
+BAND_EVIDENCE_FLOOR_DB = -50.0
+HINT_THRESHOLD_DB = 1.0
+
+
+def band_evidence(band_a: dict, band_b: dict) -> str:
+    if not band_a["available"] or not band_b["available"]:
+        return "unavailable"
+    levels = [band["relative_db"] for band in (band_a, band_b) if band["relative_db"] is not None]
+    if not levels or max(levels) < BAND_EVIDENCE_FLOOR_DB:
+        return "insufficient_energy"
+    return "sufficient"
 
 
 def delta(a: float | None, b: float | None) -> float | None:
@@ -118,9 +131,17 @@ def compare(
     }
     crest_key = "gated_crest_factor_db" if matching == "active" else "crest_factor_db"
     crest_delta = delta(metrics_a["level"][crest_key], matched_metrics_b["level"][crest_key])
+    evidence = {
+        name: (
+            band_evidence(spectrum_a["bands"][name], spectrum_b["bands"][name])
+            if same_bandwidth
+            else "unavailable"
+        )
+        for name, _, _ in BANDS
+    }
     hints = []
     for name, value in band_deltas.items():
-        if value is not None and abs(value) >= 1:
+        if evidence[name] == "sufficient" and value is not None and abs(value) >= HINT_THRESHOLD_DB:
             direction = "Cut" if value > 0 else "Boost"
             observation = (
                 f"B has {value:+.1f} dB relative band energy versus A in {BAND_LABELS[name]}. "
@@ -144,6 +165,8 @@ def compare(
         "loudness_match": match_info,
         "deltas_b_minus_a": {
             "relative_band_db": band_deltas,
+            "band_evidence": evidence,
+            "band_evidence_floor_db": BAND_EVIDENCE_FLOOR_DB,
             "centroid_hz": delta(spectrum_a["centroid_hz"], spectrum_b["centroid_hz"]),
             "rolloff_85_hz": delta(spectrum_a["rolloff_85_hz"], spectrum_b["rolloff_85_hz"]),
             "crest_factor_db": crest_delta,
@@ -158,6 +181,14 @@ def compare(
     }
     if not match_info["applied"]:
         result["cautions"].append(match_info["reason"])
+    skipped = [BAND_LABELS[name] for name, value in evidence.items()
+               if value == "insufficient_energy"]
+    if skipped:
+        result["cautions"].append(
+            "No EQ hints for bands with negligible energy in both A and B (below "
+            f"{BAND_EVIDENCE_FLOOR_DB:.0f} dB relative): {', '.join(skipped)}. Their raw deltas "
+            "are numerically unstable and are reported only for completeness."
+        )
     if match_info["activity"]["duration_mismatch"] or match_info["activity"]["activity_mismatch"]:
         result["cautions"].append(
             "A and B differ in duration or active (gated) duration; trim both to the same phrase. "
