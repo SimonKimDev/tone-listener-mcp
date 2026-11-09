@@ -102,7 +102,7 @@ class ListeningFields(Response):
     upload_gain_db: float
     upload_loudness_match: UploadLoudnessMatch | None
     listening_failure_stage: FailureStage | None
-    input_transport: Literal["files", "youtube_url"]
+    input_transport: Literal["files", "youtube_url", "youtube_url+files"]
 
 
 class ServerInfo(Response):
@@ -177,6 +177,14 @@ class EqHint(Response):
     text: str = Field(description="Human-readable summary of the other fields")
 
 
+class AvailableAnalyses(Response):
+    """Which analyses this source combination supports; listening also needs a Gemini key."""
+
+    semantic_listening: bool
+    rms_matching: bool
+    spectral_deltas: bool
+
+
 class CompareResponse(ListeningFields):
     metrics_a: AudioMetrics
     metrics_b: AudioMetrics
@@ -184,5 +192,20 @@ class CompareResponse(ListeningFields):
     loudness_match: LoudnessMatch
     deltas_b_minus_a: Deltas
     eq_direction_hints: list[EqHint]
+    cautions: list[str]
+    available_analyses: AvailableAnalyses
+    listening: ComparisonResult | None
+
+
+class UnavailableAnalyses(Response):
+    rms_matching: str
+    spectral_deltas: str
+
+
+class CompareYouTubeResponse(ListeningFields):
+    reference: YouTubeSource
+    available_analyses: AvailableAnalyses
+    unavailable_analyses: UnavailableAnalyses
+    metrics_b: AudioMetrics
     cautions: list[str]
     listening: ComparisonResult | None
