@@ -25,6 +25,7 @@ from tone_listener_mcp.workbench.renderer import RenderError
 from tone_listener_mcp.workbench.storage import LocalStorage
 
 VIDEO = "https://www.youtube.com/watch?v=401iS5McuoU"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _success(model="offline-test", gain="clean"):
@@ -488,6 +489,15 @@ def test_cancelled_leader_still_finishes_shared_request_for_waiter(tmp_path):
     assert outcomes["leader"] == ("fresh", {"value": 1})
     assert outcomes["waiter"] == ("shared", {"value": 1})
     assert cache.run_shared(key, request, wait_cancel, may_start=False) == ("blocked", None)
+
+
+def test_benchmark_and_fixture_scripts_bypass_the_workbench_cache():
+    for script in ("eval_workbench_references.py", "create_workbench_fixture.py"):
+        source = (ROOT / "scripts" / script).read_text(encoding="utf-8")
+        assert "analysis_cache" not in source and "AnalysisCache" not in source, script
+        assert "workbench.api" not in source and "/api/jobs/analysis" not in source, script
+    reference = (ROOT / "scripts" / "eval_workbench_references.py").read_text(encoding="utf-8")
+    assert "from tone_listener_mcp.listener import" in reference
 
 
 def _leader_finishes_after_waiter_miss(monkeypatch, release):

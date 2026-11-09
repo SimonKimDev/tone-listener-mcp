@@ -83,37 +83,82 @@ export GEMINI_API_KEY="your-key"
 
 The server speaks MCP over stdio, not an interactive terminal interface.
 
-## Local renderer foundation
+## Local tone workbench
 
-The local tone workbench is being introduced in separate layers. This foundation
-provides tone-profile listening, versioned project/chain models, the Soundshed
-adapter and a sandboxed renderer; the web launcher and UI are not included yet.
-The existing five stdio MCP tools are unchanged.
+The optional web workbench runs on this Mac and serves its built React UI and
+FastAPI endpoints from one loopback origin. It does not deploy to a cloud
+service or expose the Gemini key to the browser. With a mode-0600 local
+credential file at `~/.config/tone-listener-mcp/env`, the web launcher loads
+the allowlisted key/model settings automatically; an already configured
+`GEMINI_API_KEY` environment variable takes precedence.
 
 The actual preview requires macOS, the installed **Soundshed Guitar 1.7.3**
 VST3, and a local build of the small Steinberg VST3 SDK host. Download the
 Steinberg VST3 SDK separately, review its license, and keep it outside this
-repository. From the repository root, build:
+repository. From the repository root, build and launch:
 
 ```sh
-python3 -m pip install -e '.[dev]'
+python3 -m pip install -e '.[dev,web]'
+npm --prefix web ci
+npm --prefix web run build
 cmake -S native/vst3-renderer -B native/vst3-renderer/build \
   -DVST3_SDK_ROOT=/absolute/path/to/vst3sdk -DCMAKE_BUILD_TYPE=Release
 cmake --build native/vst3-renderer/build --target tone-vst3-renderer
+tone-listener-web --port 8765 --model gemini-3.6-flash
 ```
 
-Preview jobs use the installed plugin in a sandbox that denies reads of profile
-databases/settings, home-directory writes and network access, while allowing
-the adapter-resolved NAM/IR resource files. The adapter reads resource records
-read-only and builds one explicit single-preset host state; it does not capture
-user mixer settings. At startup, a mandatory actual-DSP canary checks +6 dB
-utility gain (tolerance +/-0.1 dB), bypass-to-dry, each NAM/IR contribution and
-order changes. Preview and export verification require the validated worker
-and plugin hashes. Preset exports reference the existing local NAM/IR library
-and do not bundle or redistribute those assets.
+Open `http://127.0.0.1:8765/`. The service binds only to `127.0.0.1`; Host and
+Origin checks plus a local session token protect its API. Use the displayed
+consent step before sending selected YouTube intervals or local audio clips to
+Gemini. YouTube duration comes from the official embedded player; if unavailable,
+enter bounded intervals yourself. Local audio is decoded with the existing
+bounded decoder and kept in private app-owned storage.
+Provider failures retain a sanitized category and `Retry-After`, not SDK payloads,
+keys or account identifiers. Daily quota exhaustion requires restored quota or
+waiting for the provider's stated window; the workbench never silently changes models.
 
-Playback uses bundled, separately licensed dry DI samples. Riff 1/2 (the defaults,
-chordal rhythm parts) are CC0 recordings from
+Before analysis, a no-provider request check (`POST /api/analysis/preflight`)
+shows which intervals reuse saved listening, which join an identical analysis
+already running, and the maximum number of new Gemini requests. Saved results
+are reused only for the same YouTube video ID or uploaded file content, exact
+interval bounds, model, and prompt/schema/preparation code; any change is a miss.
+Only successful profiles are saved (never failures, 429s or synthetic fixtures).
+Identical concurrent analyses share one provider request and its outcome, and
+cancelling one waiting draft does not cancel the shared request. The analysis
+job carries the confirmed `max_new_requests`; if reusable results changed, the
+server returns 409 for reconfirmation rather than sending more requests. Reused
+intervals are labelled with their original analysis time. Tick "Listen again"
+to bypass saved results explicitly. The reference benchmark calls the listener
+directly and never uses this reuse layer, so its independent repeats are unchanged.
+Filesystem paths are redacted from public JSON, preset descriptions and service
+logs. Startup atomically sanitizes legacy project metadata without changing its
+revision or DSP controls.
+
+Projects are saved in the OS application-support directory. Preview jobs use
+the installed plugin in a sandbox that denies reads of profile databases/settings,
+home-directory writes and network access, while allowing the adapter-resolved
+NAM/IR resource files. The adapter reads resource records read-only, and builds
+one explicit single-preset host state; it does not capture user mixer settings.
+At startup, a mandatory actual-DSP canary checks +6 dB utility gain
+(tolerance +/-0.1 dB), bypass-to-dry, each NAM/IR contribution and order changes.
+Preview, playback and export are refused without this validation; old previews
+without the verified worker/plugin hashes cannot be exported.
+The chain is one serial path;
+resource IDs, parameter definitions, plugin state and `.soundshed.preset`
+packaging remain inside the Soundshed adapter. Preset exports reference the
+existing local NAM/IR library and do not bundle or redistribute those assets.
+The starting recipe uses one explicitly selected categorical reference profile.
+Clean/crunch/high-gain profiles select different curated capture candidates and
+Soundshed EQ/cutoff controls. Capture labels are recommendations, not claims about
+the source player's gear; unavailable candidates and ambiguous effects become
+positional notes rather than silent substitutions. The interval selector can
+regenerate the chain from another stored profile without another Gemini request.
+Failed analysis creates an unresolved draft, not a universal Amane preset.
+The official YouTube API is confined to an opaque sandboxed child frame; its
+third-party script cannot read the app's session token or call its local API.
+Playback uses bundled, separately licensed dry DI samples; monitor level and
+dry/wet blend do not modify the saved preset. Riff 1/2 (the defaults, chordal
+rhythm parts) are CC0 recordings from
 [dry-guitar-samples](https://github.com/danieljfarrell/dry-guitar-samples).
 Lead 1/2 (an upper-register lead line and a single-note pedal riff) are
 excerpts of the **Guitar-TECHS** dataset by Hegel Pedroza, Wallace Abreu,
@@ -121,22 +166,64 @@ Ryan M. Corey and Iran R. Roman ([Zenodo record 14963133](https://zenodo.org/rec
 licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): Player 3
 direct-input excerpts `directinput_08.wav` and `directinput_10.wav`, one channel
 of the identical dual-mono pair, trimmed and resampled from 48 to 44.1 kHz
-without normalization or gain (see
-`src/tone_listener_mcp/workbench/assets/di/provenance.json` and
+without normalization or gain (see `assets/di/provenance.json` and
 `scripts/prepare_lead_dis.py`). Cite: Pedroza, Hegel, et al. "Guitar-TECHS: An
 Electric Guitar Dataset Covering Techniques, Musical Excerpts, Chords and Scales
 Using a Diverse Array of Hardware." ICASSP 2025, IEEE,
-doi:10.1109/ICASSP49660.2025.10887996.
-
+doi:10.1109/ICASSP49660.2025.10887996. Choose any sample in the preview and in
+Refine/Fine-tune; each selected sample adds one disclosed judge request. Build output is placed
+inside the Python package for the local launcher and is ignored by Git.
 Previews are float WAVs, preserving DSP levels without PCM clipping. Up to ten
 seconds of silence are processed for effect tails; a tail that is still audible
 at that limit fails explicitly instead of saving truncated audio.
+
+**Refine** (optional, paid) renders a bounded candidate set from the current
+chain, uploads RMS-matched (-20 dBFS) copies with a fresh exact-input preview
+and consent, and asks a relative judge which candidate sits closest to the
+analysed reference interval. Choose the candidate set in the panel:
+
+- **Explore** (default) swaps in alternative category recipes plus fixed
+  pushed-clean and brighter/darker variants. Recipe names are alternatives, not
+  a measured gain ordering: a "cleaner" recipe uses different gear and can be
+  judged *more* saturated than the current chain.
+- **Fine-tune** keeps the current gear, order, notes and analysis identity and
+  only moves real parameters. Individual moves: the first enabled NAM capture's
+  input trim (-6/-3/+3/+6 dB) or an upper-EQ tilt (parametric 2 kHz + 8 kHz,
+  +/-3 dB each; capture treble when no EQ is present). Joint moves apply the
+  +/-6 dB trim and the +/-3 dB tilt together (four sign combinations). Values are
+  clamped to parameter bounds, no-op moves and identical chains are dropped (a
+  joint move that clamps to a single-axis chain is listed once), and the
+  wrong-direction control is kept. A full set is current + 10 moves + control,
+  so each relative request uploads up to 12 clips.
+
+Both modes show the candidate count, uploads per request and maximum request
+count before consent.
+The search mode is part of the plan identity, so changing it requires a new
+preflight. A suggestion requires usable, control-passing evidence on every
+planned DI; adopting a candidate is explicit and never edits your manual
+settings silently. A parameter move is not itself a tonal improvement claim, and
+a relative ranking is not a perceptual match. To refine further, adopt a
+candidate and run another Fine-tune round with its own plan and consent.
+Stored refinement renders and exported presets stay unchanged native output.
+Refinement audition playback serves separate level-matched copies (equal RMS
+across the candidate set with a shared peak ceiling), so a louder candidate is not
+favoured by volume; the model uploads are separately RMS matched to -20 dBFS.
+Neither copy is written back to the stored WAVs or presets.
+
+Engine evidence for Fine-tune (no Gemini calls) renders each move with both DIs,
+reporting full-channel output headroom separately from labelled mono-downmix tonal
+measurements, and delivering byte copies of the renderer snapshot WAVs:
+
+```sh
+python3 scripts/verify_local_search.py --project path/to/project.json --output /private/tmp/local-search
+```
 
 Offline checks:
 
 ```sh
 ruff check .
-python3 -m pytest -q -p no:cacheprovider
+pytest -q
+npm --prefix web run build
 ```
 
 Opt-in **installed-engine** checks (no Gemini calls):
@@ -152,9 +239,68 @@ instance and compare actual audio. They do **not** exercise the standalone
 Soundshed app's ZIP importer UI or modify its preset library. Soundshed 1.7.3
 ignores the legacy `mixer.masterGain` host-state field in this test; the explicit
 global output gain and measured equal-power stereo pan law define preview level.
-Standalone import remains **not verified**: changing `HOME` does not redirect
-JUCE's native shared profile location. A protected native-import acceptance
-environment is still required; do not launch or import into a live user profile.
+Standalone import remains **not verified**: the installed Mac app uses JUCE's
+native shared profile location, and a sandboxed Foundation probe confirmed that
+changing `HOME` does not redirect it. Home-wide write denial protects the live
+profile and legacy container migration sources, but does not provide a writable
+temporary profile. A second instance could also interact with the running app's
+single-instance dispatch. No standalone launch/import was attempted without
+proven profile and instance isolation; a protected native-import acceptance
+environment is still required.
+
+The opt-in live-reference benchmark is separate from offline CI. It freezes
+categorical rubric, schema, prompts, model, recipe/engine hashes, complete grader
+and benchmark source hashes, and source
+intervals before its first paid request, then preserves all six requested cases:
+
+```sh
+python3 scripts/eval_workbench_references.py --live --model gemini-3.6-flash \
+  --split development --start 0 --end 30 --output /private/tmp/tone-reference-report
+python3 scripts/eval_workbench_references.py --live --model gemini-3.6-flash \
+  --split held-out --start 0 --end 30 --output /private/tmp/tone-reference-report
+```
+
+The held-out step refuses changed recipe/model/rubric settings. It does not
+reclassify tuned cases as untouched. Each supported candidate uses both real DI
+phrases, independently judged with neutral filenames and no target/artist/gear
+information. Opposite-saturation controls and repeated reference/preview
+judgments calibrate the evaluator. API failures, uncertain attribution and
+unsupported effects remain blocked/inconclusive, never passes. The report records
+raw judgments, actual previews/presets, hashes, axis differences and inference
+call counts; no credentials are saved. Same-model agreement is only a tone-profile
+regression signal, not proof of perceptual identity or general validity.
+An interrupted `running` case stops with an explicit recovery instruction rather
+than being silently skipped. A current 429 pauses further benchmark requests and
+retains unfinished cases; honor the recorded `Retry-After` before an explicitly
+labelled new run. Raw reference reuse is opt-in with `--reuse-references DIR`,
+requires matching frozen source/model/schema/prompts, and records prior calls
+separately from new calls.
+
+For bounded development of a stable lead interval, use a **new** output directory:
+
+```sh
+python3 scripts/eval_workbench_references.py --live --model gemini-3.6-flash \
+  --split development --case case-01 --start 19.2 --end 30 \
+  --output /private/tmp/tone-amane-lead-development
+```
+
+This is development, not a fresh untouched held-out claim. Do not change the rubric
+to excuse mismatches or tune generation using held-out tonal evidence.
+Bounded `--case` selection is development-only and cannot bypass held-out
+prerequisites. Reference-reuse accounting includes only consumed judgments.
+
+For interval-selection UI acceptance without paid calls:
+
+```sh
+python3 scripts/create_workbench_fixture.py
+# Separate invented 429/Retry-After example for diagnostics UI:
+python3 scripts/create_workbench_fixture.py --diagnostics
+```
+
+This creates a prominently labelled **offline synthetic fixture** with three
+invented profiles. Regeneration makes no Gemini request. Its UI and exports never
+present it as real listening or tone-match evidence; previews still use actual
+licensed DI through the validated installed engine.
 
 ## Register with an MCP client
 
@@ -250,7 +396,7 @@ For a 0.5-peak, 1 kHz synthetic sine, selected fields look like this
     "centroid_hz": 1000.0,
     "rolloff_85_hz": 1007.81,
     "bands": {
-      "800_2000": {"available": true, "effective_range_hz": [800, 2000], "relative_db": 0.0}
+      "800_2000": {"available": true, "relative_db": 0.0}
     }
   },
   "stereo": null
@@ -267,11 +413,11 @@ consumers should not compare old and new range values as the same statistic.
 Spectrum uses Welch's method with a Hann window and up to 4096 frames, averaging
 channel powers so antiphase stereo does not disappear. Frequency resolution and
 Nyquist are reported. Band IDs cover `<80`, `80-250`, `250-800`, `800-2000`,
-`2000-5000`, `5000-8000` and `>8000` Hz. Each band's `effective_range_hz`
-gives its lower and upper frequency bounds, with the upper bound capped at
-Nyquist. The range is `null` when the band starts at or above Nyquist.
-`relative_db` is band power relative to total spectral power, not an absolute
-EQ control value.
+`2000-5000`, `5000-8000` and `>8000` Hz. `relative_db` is band power relative
+to total spectral power, not an absolute EQ control value.
+Each band's `effective_range_hz` reports its Nyquist-clipped range. Comparisons
+across different Nyquist frequencies omit relative band deltas and EQ direction
+hints because their total-power denominators cover different bandwidths.
 
 Stereo reports L/R correlation and side/mid energy ratio dB, with separate mid
 and side RMS levels. `null` means undefined or unavailable, including silence,
@@ -349,10 +495,6 @@ clips. Gemini compares both uploads in one request and returns differences,
 which clip is brighter/more saturated/more compressed/more ambient, suggested
 adjustments and uncertainties.
 
-When the clips have different Nyquist frequencies, their relative energies use
-different normalization ranges. Relative band deltas are then `null` and the
-EQ direction hints list is empty.
-
 ## Privacy and limitations
 
 With a key configured, `analyze_youtube` sends the public video URL and selected
@@ -405,9 +547,8 @@ possible; start/end should cover equivalent musical material.
 See [controlled validation](docs/validation.md) for known gain, soft clipping,
 EQ and simple reverb variants. Tests are synthetic/offline with mocked Gemini;
 the stdio integration test spawns the real server and exercises all five tools.
-GitHub Actions runs lint and tests on Python 3.11 and 3.12 for every pull
-request (including forks), pushes to `main` and manual dispatch; the `ci-passed`
-job is the required status check for merging into `main`. The opt-in `scripts.eval_listening` harness runs blinded, swapped A/B
+GitHub Actions runs lint and tests on Python 3.11 and 3.12 on push or manual
+dispatch. The opt-in `scripts.eval_listening` harness runs blinded, swapped A/B
 judgments with separate tuning/held-out sets; see the validation guide for
 request budgets and credential loading. Live Gemini checks require a key and
 incur API usage; skipped runs do not measure listening accuracy.
