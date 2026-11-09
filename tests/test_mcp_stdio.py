@@ -49,6 +49,8 @@ def test_stdio_tools(tmp_path):
             assert info.structured_content["name"] == "tone-listener-mcp"
             assert info.structured_content["primary_tool"] == "analyze_youtube"
             assert info.structured_content["youtube_local_extraction"] is False
+            assert info.structured_content["listening_available"] is False
+            assert info.structured_content["model"]
             result = await session.call_tool("audio_metrics", {"path": str(path)})
             assert not result.is_error
             assert abs(result.structured_content["spectrum"]["centroid_hz"] - 1000) < 5

@@ -35,7 +35,9 @@ tone-recognition quality. A live listening check is opt-in and incurs API usage.
 Run `.venv/bin/ruff check . && .venv/bin/pytest -q` for the offline suite.
 Tests cover bounded decoding, level/spectrum/stereo metrics, linear-gain invariance,
 known EQ/drive directions, provider mocks and an actual stdio process listing and
-calling all five MCP tools. No API key or network is needed.
+calling all six MCP tools. No API key or network is needed. CI also installs the
+built wheel into a clean environment and runs `scripts/smoke_installed.py` against
+the installed executable.
 
 ## Blinded live evaluation (opt-in)
 
@@ -55,7 +57,8 @@ Never paste the key into reports, commit it, or enable shell tracing.
 ```
 
 `--env-file` parses only literal allowed `KEY=value` entries with optional outer
-quotes and comments. It requires mode 0600 and current-user ownership. It never
+quotes and comments; unmatched quotes are rejected so a malformed key is never sent.
+It requires mode 0600 and current-user ownership. It never
 sources/executes the file or expands shell expressions. Exported variables remain
 supported when the option is omitted. Keys never enter reports or CLI arguments.
 
@@ -241,11 +244,8 @@ within 1e-6 relative tolerance for that stereo case, 12 kHz band loss during
 resampling and peak-safety cases, with separate antiphase/silence regressions.
 These tests verify preprocessing bytes, not live model quality.
 
-**Evaluation status (2026-11-08):** the first credential-free harness run was skipped.
-Initial live probes returned HTTP 401 because the private key file contained an
-unmatched trailing quote. The private file was corrected separately; the literal
-parser now rejects unmatched quotes without sending a malformed credential.
-The user then prioritized a real YouTube reference over synthetic benchmarking.
+**Evaluation status (2026-11-08):** no blinded harness run has produced scores;
+a real YouTube reference check was prioritized over synthetic benchmarking.
 
 Synthetic tuning accuracy, held-out accuracy, gain-category ordering and live
 order consistency are **not measured**. No synthetic prompt-tuning iteration has occurred.
@@ -287,7 +287,7 @@ These results are **model listening judgments**, not calibrated accuracy,
 measured EQ values, equipment identification or a verified preset match.
 
 The installed console executable was also exercised over real MCP stdio with
-the corrected credential and explicit 3.6 model: all five tools were discovered,
+the explicit 3.6 model: all five tools available then were discovered,
 `analyze_youtube` on the requested 0–30 s segment returned HTTP 200, and its
 structured listening payload passed validation. The offline suite independently
 checks missing keys, URL normalization/rejection, interval/evidence bounds and

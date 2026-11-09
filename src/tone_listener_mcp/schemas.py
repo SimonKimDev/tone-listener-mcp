@@ -152,11 +152,25 @@ class ListeningFields(Response):
     input_transport: Literal["files", "youtube_url", "youtube_url+files"]
 
 
+class RequestSettings(Response):
+    deadline_seconds: float
+    max_concurrent_requests: int
+    cache_entries: int
+
+
 class ServerInfo(Response):
     name: str
     version: str
     primary_tool: str
     youtube_local_extraction: bool
+    model: str = Field(description="Gemini model listening requests will use")
+    listening_available: bool = Field(
+        description="True when a key is configured and settings are valid; no request is made"
+    )
+    listening_unavailable: str | None = Field(description="Why listening is unavailable")
+    max_seconds: float | None = Field(description="TONE_LISTENER_MAX_SECONDS; null if invalid")
+    request_settings: RequestSettings | None = Field(description="Null if any value is invalid")
+    configuration_errors: list[str]
 
 
 class AnalyzeAudioResponse(ListeningFields):
