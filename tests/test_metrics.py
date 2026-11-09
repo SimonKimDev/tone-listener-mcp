@@ -95,3 +95,55 @@ def test_stereo_and_antiphase():
     assert antiphase["spectrum"]["centroid_hz"] == pytest.approx(1000, abs=2)
     assert measure(clip(tone))["stereo"] is None
     json.dumps(antiphase, allow_nan=False)
+
+
+def test_gated_level_ignores_silence_padding():
+    tone = sine()
+    padded = measure(clip(np.concatenate((tone, np.zeros(96000)))))["level"]
+    plain = measure(clip(tone))["level"]
+    assert padded["gated_rms_dbfs"] == pytest.approx(plain["gated_rms_dbfs"], abs=1e-6)
+    assert padded["gated_rms_dbfs"] == pytest.approx(-9.0309, abs=0.01)
+    assert padded["gated_crest_factor_db"] == pytest.approx(3.0103, abs=0.01)
+    assert padded["gated_duration_seconds"] == pytest.approx(1, abs=0.002)
+    assert padded["rms_dbfs"] < plain["rms_dbfs"] - 4
+
+
+def test_gated_level_undefined_for_silence():
+    result = measure(clip(np.zeros(48000)))["level"]
+    assert result["gated_rms_dbfs"] is None
+    assert result["gated_crest_factor_db"] is None
+    assert result["gated_duration_seconds"] == 0
+
+
+def test_gated_level_keeps_quiet_material_within_gate():
+    rate = 48000
+    t = np.arange(rate // 2) / rate
+    loud, quiet = 0.5 * np.sin(2 * np.pi * 440 * t), 0.125 * np.sin(2 * np.pi * 440 * t)
+    tail = 0.02 * np.sin(2 * np.pi * 440 * t)
+    level = measure(clip(np.concatenate((loud, quiet, tail)), rate))["level"]
+    # The -12 dB passage stays active; the -28 dB tail is below the relative gate.
+    assert level["gated_duration_seconds"] == pytest.approx(1.0, abs=0.06)
+    expected = 10 * np.log10((0.5**2 + 0.125**2) / 4)
+    assert level["gated_rms_dbfs"] == pytest.approx(expected, abs=0.05)
+
+
+def test_gated_level_keeps_continuous_ambience():
+    rate = 48000
+    rng = np.random.default_rng(3)
+    t = np.arange(rate) / rate
+    note = 0.3 * np.sin(2 * np.pi * 220 * t) * (t < 0.5)
+    ambience = measure(clip(note + rng.normal(0, 0.03, rate), rate))["level"]
+    # About 17 dB below the note: within the relative gate, so the room stays active.
+    # Its end loses window * gate / level (about 6 dB above the gate: 12.5 ms).
+    assert ambience["gated_duration_seconds"] == pytest.approx(1.0 - 0.0125, abs=0.003)
+    hiss = measure(clip(note + rng.normal(0, 0.01, rate), rate))["level"]
+    assert hiss["gated_duration_seconds"] == pytest.approx(0.5, abs=0.002)
+
+
+def test_gated_level_defined_for_clicks_passing_only_together():
+    samples = np.zeros(48000)
+    # Each click alone is below -70 dBFS per 50 ms window; together they pass.
+    samples[[20000, 20100]] = 0.012
+    level = measure(clip(samples))["level"]
+    assert level["gated_rms_dbfs"] == pytest.approx(10 * np.log10(2 * 0.012**2 / 2400), abs=0.01)
+    assert level["gated_duration_seconds"] == 0

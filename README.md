@@ -244,7 +244,23 @@ quality requires evaluation against recordings with known changes.
 
 ### Comparison
 
-B is RMS-matched to A **before** spectral comparison and listening. The response
+B is RMS-matched to A **before** spectral comparison and listening. By default
+(`matching: "active"`) only gated, non-silent regions are matched. Unweighted 50 ms
+windows are evaluated at every sample offset and kept when above -70 dBFS and within
+20 dB of their mean; a sample is active when every window containing it is kept, and
+the gated RMS is the RMS of active samples. Windows overhanging a clip edge count as
+digital silence, so silence padding at any length or alignment does not change the
+applied gain, gated crest factor or active seconds, even for staccato or very short
+clips. The audio itself is not trimmed or retimed. Gaps shorter than 50 ms stay
+active, and quiet passages or ambience within the gate are kept. At a boundary with
+silence, material loses about `50 ms × gate / level` of measured activity: under 1 ms
+for material near the clip's mean level, up to 50 ms just above the gate. In tests,
+low-level noise padding moves the gain by less than 0.01 dB. The crest-factor delta
+uses the gated RMS. Use `matching: "whole"` for whole-clip RMS that includes silence
+and tails.
+`loudness_match.activity` reports durations, gated active seconds and mismatch
+flags; mismatches add a caution, because effect tails still affect spectra. The
+Gemini uploads are matched with the same strategy. The response
 retains original `metrics_a`/`metrics_b` and reports `matched_metrics_b`,
 `loudness_match`, `deltas_b_minus_a` and `eq_direction_hints`. Linear gain alone
 should not produce a tonal difference:

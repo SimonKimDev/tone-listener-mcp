@@ -8,6 +8,7 @@ import pytest
 from scripts.eval_listening import evaluate, load_credentials, prediction, run_split, score
 from scripts.make_validation_set import generate
 from tone_listener_mcp.audio_io import load_audio
+from tone_listener_mcp.metrics import gated_power
 
 
 def test_prediction_swap_invariance():
@@ -63,7 +64,7 @@ def test_mocked_blind_split(monkeypatch):
     def compare(a, b):
         assert a.source == b.source == "blind"
         assert a.duration == b.duration
-        assert np.mean(a.samples**2) == pytest.approx(np.mean(b.samples**2), rel=1e-5)
+        assert gated_power(a)[0] == pytest.approx(gated_power(b)[0], rel=1e-4)
         calls.append((a, b))
         return {"listening": payload, "listening_unavailable": None}
 
