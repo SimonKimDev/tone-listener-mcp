@@ -21,13 +21,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+web = [
+    "fastapi>=0.115,<1",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.30,<1",
+]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
+    "fastapi>=0.115,<1",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.30,<1",
 ]
 
 [project.scripts]
 tone-listener-mcp = "tone_listener_mcp.server:main"
+tone-listener-web = "tone_listener_mcp.workbench.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tone_listener_mcp"]
