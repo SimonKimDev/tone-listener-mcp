@@ -158,7 +158,7 @@ export function ChainEditor({
     id: node.id,
     type: "tone",
     position: positions[node.id] ?? { x: 54 + index * 272, y: 80 },
-    draggable: node.kind !== "input" && node.kind !== "output",
+    draggable: !saving && node.kind !== "input" && node.kind !== "output",
     focusable: true,
     ariaRole: "button",
     ariaLabel: `${nodeLabel(node.kind)}: ${node.title}`,
@@ -170,7 +170,7 @@ export function ChainEditor({
       enabled: node.enabled,
       omitted: node.kind === "gear_note" && node.note_role === "omitted_optional",
     },
-  })), [nodes, positions, selectedId]);
+  })), [nodes, positions, selectedId, saving]);
   const edges = useMemo<Edge[]>(() => nodes.slice(0, -1).map((node, index) => ({
     id: `edge-${node.id}-${nodes[index + 1]?.id}`,
     source: node.id,
@@ -204,6 +204,7 @@ export function ChainEditor({
   }, [selected?.id, selected?.kind, replacementKind, catalog]);
 
   function reorderByPosition(dragged: GraphNode) {
+    if (saving) return;
     if (dragged.id === "input" || dragged.id === "output") return;
     const position = { ...positions, [dragged.id]: dragged.position };
     const middle = nodes.slice(1, -1).slice().sort((left, right) => {
@@ -216,14 +217,15 @@ export function ChainEditor({
   }
 
   function updateNode(id: string, update: Partial<ChainNode>) {
+    if (saving) return;
     setNodes((current) => current.map((node) => node.id === id ? { ...node, ...update } : node));
   }
 
   function moveSelected(direction: -1 | 1) {
-    if (!selected) return;
+    if (saving || !selected || selected.kind === "input" || selected.kind === "output") return;
     const index = nodes.findIndex((node) => node.id === selected.id);
     const next = index + direction;
-    if (index <= 0 || next >= nodes.length - 1) return;
+    if (index <= 0 || index >= nodes.length - 1 || next <= 0 || next >= nodes.length - 1) return;
     setNodes((current) => {
       const copy = [...current];
       [copy[index], copy[next]] = [copy[next]!, copy[index]!];
@@ -233,7 +235,7 @@ export function ChainEditor({
   }
 
   function addBlock(kind: BlockKind) {
-    if (nodes.length >= 16) return;
+    if (saving || nodes.length >= 16) return;
     const options = compatibleResource(kind, catalog);
     let asset: ChainNode["asset"] = null;
     if (["nam_fx", "nam_amp", "cab_ir"].includes(kind)) {
@@ -279,7 +281,7 @@ export function ChainEditor({
   }
 
   async function saveChain() {
-    if (saveErrors.length || !dirty) return;
+    if (saving || saveErrors.length || !dirty) return;
     setSaving(true);
     setError("");
     try {
@@ -305,7 +307,7 @@ export function ChainEditor({
           <p className="eyebrow">02 / SIGNAL PATH</p>
           <h2>Shape the chain</h2>
         </div>
-        <div className="chain-actions">
+        <fieldset className="chain-actions" disabled={saving} aria-label="Chain actions">
           <select
             aria-label="Block to add"
             value={addKind}
@@ -320,7 +322,7 @@ export function ChainEditor({
           <button className={`secondary-button ${dirty ? "unsaved" : ""}`} onClick={() => void saveChain()} disabled={!dirty || saving || saveErrors.length > 0}>
             {saving ? "Saving…" : dirty ? "Save chain" : "Saved"}
           </button>
-        </div>
+        </fieldset>
       </div>
       <div className="chain-meta">
         <span><i className="status-dot" /> {nodes.length} blocks</span>
@@ -350,16 +352,17 @@ export function ChainEditor({
         </div>
       </div>
       <div className="chain-detail-layout">
-        <div className="node-editor">
+        <fieldset className="node-editor" disabled={saving} aria-label="Selected block">
           {selected ? (
             <>
               <div className="node-editor-head">
                 <span className={`kind-mark mark-${selected.kind}`}>{nodeLabel(selected.kind)}</span>
                 <div className="node-editor-buttons">
-                  <button className="small-button" onClick={() => moveSelected(-1)} disabled={nodes.findIndex((node) => node.id === selected.id) <= 1}>← Move</button>
-                  <button className="small-button" onClick={() => moveSelected(1)} disabled={nodes.findIndex((node) => node.id === selected.id) >= nodes.length - 2}>Move →</button>
+                  <button className="small-button" onClick={() => moveSelected(-1)} disabled={selected.kind === "input" || selected.kind === "output" || nodes.findIndex((node) => node.id === selected.id) <= 1}>← Move</button>
+                  <button className="small-button" onClick={() => moveSelected(1)} disabled={selected.kind === "input" || selected.kind === "output" || nodes.findIndex((node) => node.id === selected.id) >= nodes.length - 2}>Move →</button>
                   {selected.kind !== "input" && selected.kind !== "output" && (
                     <button className="small-button remove-button" onClick={() => {
+                      if (saving) return;
                       setNodes((current) => current.filter((node) => node.id !== selected.id));
                       setSelectedId(nodes[Math.max(0, nodes.findIndex((node) => node.id === selected.id) - 1)]?.id ?? "input");
                     }}>Remove</button>
@@ -459,7 +462,7 @@ export function ChainEditor({
               )}
             </>
           ) : <p className="muted">Select a chain block to edit it.</p>}
-        </div>
+        </fieldset>
         <aside className={`validation-panel ${errors.length ? "has-errors" : "valid"}`}>
           <span className="validation-title">{errors.length ? "Needs attention" : "Chain ready"}</span>
           {errors.length ? (

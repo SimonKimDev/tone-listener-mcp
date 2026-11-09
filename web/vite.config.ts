@@ -8,7 +8,19 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:8765",
+      "/api": {
+        target: "http://127.0.0.1:8765",
+        changeOrigin: true,
+        configure(proxy) {
+          proxy.on("proxyReq", (proxyReq, request) => {
+            // Rewrite only requests originating in this loopback dev UI, never foreign origins.
+            if (request.headers.host === "127.0.0.1:5173"
+                && request.headers.origin === "http://127.0.0.1:5173") {
+              proxyReq.setHeader("Origin", "http://127.0.0.1:8765");
+            }
+          });
+        },
+      },
     },
   },
   build: {

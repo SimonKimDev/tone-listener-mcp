@@ -145,7 +145,8 @@ a { color: var(--lime); }
 .section-heading { align-items: end; margin: 0 0 12px; }
 .section-heading .eyebrow { margin-bottom: 7px; }
 .section-heading h2, .sidebar-card h2 { font: 600 19px var(--display); letter-spacing: -.03em; margin: 0; }
-.chain-actions { justify-content: flex-end; gap: 8px; }
+.chain-actions { justify-content: flex-end; gap: 8px; border: 0; padding: 0; min-width: 0; }
+.chain-actions, .node-editor { margin: 0; }
 .chain-actions select { width: 168px; padding: 9px; font-size: 9px; }
 .small-button, .secondary-button { border: 1px solid #3a433c; background: #1c211d; color: #b9c1b8; border-radius: 4px; padding: 8px 11px; font-size: 9px; cursor: pointer; white-space: nowrap; }
 .small-button:hover:not(:disabled), .secondary-button:hover:not(:disabled) { border-color: #79846f; color: var(--text); }
