@@ -184,3 +184,75 @@ def test_antiphase_comparison_does_not_upload(monkeypatch):
     assert "Stereo downmix cancels" in result["listening_unavailable"]
     assert result["metrics_b"]["level"]["rms_dbfs"] is not None
     client.files.upload.assert_not_called()
+
+
+def pluck(seconds=1.0, rate=48000):
+    t = np.arange(round(seconds * rate)) / rate
+    return sum(np.sin(2 * np.pi * 110 * k * t) / k for k in range(1, 20)) * 0.3 * np.exp(-2 * t)
+
+
+def test_silence_padding_does_not_change_active_matching():
+    phrase = pluck()
+    padded = np.concatenate((phrase, np.zeros(48000)))
+    result = compare(clip(phrase), clip(padded))
+    matching = result["loudness_match"]
+    assert matching["strategy"] == "active"
+    assert matching["gain_db_applied_to_b"] == pytest.approx(0, abs=0.01)
+    assert result["deltas_b_minus_a"]["crest_factor_db"] == pytest.approx(0, abs=0.01)
+    assert result["matched_metrics_b"]["level"]["peak_dbfs"] == pytest.approx(
+        result["metrics_a"]["level"]["peak_dbfs"], abs=0.01
+    )
+    assert matching["activity"]["duration_mismatch"]
+    assert not matching["activity"]["activity_mismatch"]
+    assert any("differ in duration" in caution for caution in result["cautions"])
+
+
+def test_whole_clip_matching_remains_available():
+    phrase = pluck()
+    padded = np.concatenate((phrase, np.zeros(48000)))
+    result = compare(clip(phrase), clip(padded), matching="whole")
+    assert result["loudness_match"]["strategy"] == "whole"
+    assert result["loudness_match"]["gain_db_applied_to_b"] == pytest.approx(3.0103, abs=0.01)
+    assert result["deltas_b_minus_a"]["crest_factor_basis"] == "crest_factor_db"
+    assert any("Whole-clip matching" in caution for caution in result["cautions"])
+
+
+def test_matching_strategy_is_validated():
+    with pytest.raises(ValueError, match="matching"):
+        loudness_match(clip(pluck()), clip(pluck()), "peak")
+
+
+def test_active_matching_undefined_below_gate():
+    quiet = clip(np.ones(48000) * 1e-4)
+    result = compare(quiet, clip(pluck()))
+    assert not result["loudness_match"]["applied"]
+    assert "-70 dBFS" in result["loudness_match"]["reason"]
+
+
+def test_upload_matching_ignores_silence_padding(monkeypatch):
+    import soundfile as sf
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    uploaded = []
+    client = MagicMock()
+    client.__enter__.return_value = client
+
+    def capture(**kwargs):
+        uploaded.append(sf.read(kwargs["file"])[0])
+        return SimpleNamespace(name=f"files/{len(uploaded)}", uri="https://example.invalid/a",
+                               state=types.FileState.ACTIVE)
+
+    client.files.upload.side_effect = capture
+    client.models.generate_content.return_value.text = json.dumps({
+        "differences": [], "brighter": "similar", "more_saturated": "similar",
+        "more_compressed": "similar", "more_ambient": "similar",
+        "suggested_adjustments": [], "uncertainties": [], "confidence": 0.5,
+    })
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", lambda **kwargs: client)
+    phrase = pluck()
+    result = compare(clip(phrase), clip(np.concatenate((phrase, np.zeros(48000)))))
+    assert result["upload_loudness_match"]["strategy"] == "active"
+    assert result["upload_loudness_match"]["additional_gain_db_applied_to_b"] == pytest.approx(
+        0, abs=0.05
+    )
+    assert np.max(np.abs(uploaded[0])) == pytest.approx(np.max(np.abs(uploaded[1])), rel=0.01)

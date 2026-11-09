@@ -18,15 +18,47 @@ BANDS = (
 )
 
 
+WINDOW_SECONDS = 0.05
+GATE_ABSOLUTE_DBFS = -70.0
+GATE_RELATIVE_DB = -20.0
+GATING_METHOD = (
+    "Unweighted 50 ms windows above -70 dBFS and within 20 dB of their mean "
+    "(BS.1770-style two-stage gate; not LUFS)"
+)
+
+
 def power_db(power: float) -> float | None:
     return float(10 * np.log10(power)) if power > 0 else None
+
+
+def gated_power(clip: AudioClip) -> tuple[float, float]:
+    """Return mean power of the active (gated) region and the gated duration in seconds.
+
+    Silence padding and decaying tails below the gate do not change this power, so
+    loudness matching on it compares the played portions of two clips.
+    """
+    samples = clip.samples.astype(np.float64)
+    frames = samples.shape[1]
+    window = max(1, round(clip.sample_rate * WINDOW_SECONDS))
+    starts = np.arange(0, frames, window)
+    sums = np.add.reduceat(np.sum(samples**2, axis=0), starts)
+    counts = np.diff(np.append(starts, frames)) * samples.shape[0]
+    powers = sums / counts
+    gate = powers > 10 ** (GATE_ABSOLUTE_DBFS / 10)
+    if not gate.any():
+        return 0.0, 0.0
+    ungated_mean = np.sum(sums[gate]) / np.sum(counts[gate])
+    gate &= powers >= ungated_mean * 10 ** (GATE_RELATIVE_DB / 10)
+    gated_frames = np.sum(counts[gate]) / samples.shape[0]
+    return float(np.sum(sums[gate]) / np.sum(counts[gate])), float(gated_frames / clip.sample_rate)
 
 
 def level_metrics(clip: AudioClip) -> dict:
     samples = clip.samples.astype(np.float64)
     power = float(np.mean(samples**2))
     peak_power = float(np.max(np.abs(samples)) ** 2)
-    window = max(1, round(clip.sample_rate * 0.05))
+    active_power, active_seconds = gated_power(clip)
+    window = max(1, round(clip.sample_rate * WINDOW_SECONDS))
     short_powers = np.array(
         [np.mean(samples[:, offset : offset + window] ** 2)
          for offset in range(0, samples.shape[1], window)]
@@ -42,6 +74,10 @@ def level_metrics(clip: AudioClip) -> dict:
         "peak_dbfs": power_db(peak_power),
         "rms_dbfs": power_db(power),
         "crest_factor_db": power_db(peak_power / power) if power else None,
+        "gated_rms_dbfs": power_db(active_power),
+        "gated_crest_factor_db": power_db(peak_power / active_power) if active_power else None,
+        "gated_duration_seconds": active_seconds,
+        "gating_method": GATING_METHOD,
         "short_term_window_seconds": window / clip.sample_rate,
         "short_term_rms_dbfs": dict(zip(("p10", "p50", "p90"), short_db)),
         "short_term_rms_range_db": robust_range,

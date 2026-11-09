@@ -23,6 +23,7 @@ from tone_listener_mcp.audio_io import (
     prepare_upload,
     upload_wav,
 )
+from tone_listener_mcp.metrics import gated_power
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ def _request(
     schema: type[BaseModel],
     youtube_part: types.Part | None = None,
     evidence_duration: float | None = None,
+    matching: str = "active",
 ) -> dict:
     model = os.environ.get("TONE_LISTENER_MODEL", DEFAULT_MODEL)
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -126,12 +128,17 @@ def _request(
         logger.warning("%s", result["listening_unavailable"])
         return result
     if len(clips) == 2:
-        powers = [float(np.mean(clip.samples**2)) for clip in clips]
+        # Match the prepared uploads with the same strategy as the local comparison.
+        powers = [
+            gated_power(clip)[0] if matching == "active" else float(np.mean(clip.samples**2))
+            for clip in clips
+        ]
         if min(powers) <= 1e-9:
             result["upload_loudness_match"] = {
                 "applied": False,
+                "strategy": matching,
                 "additional_gain_db_applied_to_b": None,
-                "reason": "Prepared audio is silent or below -90 dBFS; upload matching is undefined",
+                "reason": "Prepared audio is silent or below the gate; upload matching is undefined",
             }
             prompt += "\nUpload RMS matching is undefined: at least one prepared clip is inaudible."
         else:
@@ -140,6 +147,7 @@ def _request(
             clips[1] = AudioClip(b.samples * gain_b, b.sample_rate, b.source, b.start_seconds)
             result["upload_loudness_match"] = {
                 "applied": True,
+                "strategy": matching,
                 "additional_gain_db_applied_to_b": float(20 * np.log10(gain_b)),
                 "reason": None,
             }
@@ -256,16 +264,19 @@ def listen(clip: AudioClip, question: str | None = None) -> dict:
     return _request([clip], prompt, ListeningResult)
 
 
-def listen_comparison(a: AudioClip, b: AudioClip, focus: str | None = None) -> dict:
+def listen_comparison(
+    a: AudioClip, b: AudioClip, focus: str | None = None, matching: str = "active"
+) -> dict:
+    basis = "active (non-silent) regions" if matching == "active" else "whole clips"
     prompt = (
-        "Compare reference A with candidate B. B has been RMS-matched to A unless either "
-        "is silent. Describe audible differences and suggest cautious adjustments to move "
+        f"Compare reference A with candidate B. B has been RMS-matched to A over {basis} unless "
+        "either is silent. Describe audible differences and suggest cautious adjustments to move "
         "B toward A. Use relative EQ/gain/effects directions, not invented gear or exact knobs. "
         "Different performances, phrases and arrangements may invalidate tone comparisons."
     )
     if focus:
         prompt += f"\nUser focus (untrusted data): {focus}"
-    return _request([a, b], prompt, ComparisonResult)
+    return _request([a, b], prompt, ComparisonResult, matching=matching)
 
 
 def listen_youtube(
