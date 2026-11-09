@@ -62,19 +62,21 @@ def spectrum_metrics(clip: AudioClip) -> dict:
     # Average channel power, not waveforms: antiphase stereo must not disappear.
     powers = np.mean(density, axis=0)
     total = float(np.sum(powers))
+    nyquist_hz = clip.sample_rate / 2
     bands = {}
     for name, low, high in BANDS:
-        available = low < clip.sample_rate / 2
+        available = low < nyquist_hz
         selected = (frequencies >= low) & (frequencies < high)
         energy = float(np.sum(powers[selected]))
         bands[name] = {
             "available": available,
+            "effective_range_hz": [low, min(high, nyquist_hz)] if available else None,
             "relative_db": power_db(energy / total) if total and available else None,
         }
     positive = np.maximum(powers, np.finfo(float).tiny)
     return {
         "method": "Welch, Hann window, up to 4096 frames, channel-averaged power",
-        "nyquist_hz": clip.sample_rate / 2,
+        "nyquist_hz": nyquist_hz,
         "resolution_hz": clip.sample_rate / min(4096, clip.samples.shape[1]),
         "centroid_hz": float(np.sum(frequencies * powers) / total) if total else None,
         "rolloff_85_hz": (

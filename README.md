@@ -177,7 +177,7 @@ For a 0.5-peak, 1 kHz synthetic sine, selected fields look like this
     "centroid_hz": 1000.0,
     "rolloff_85_hz": 1007.81,
     "bands": {
-      "800_2000": {"available": true, "relative_db": 0.0}
+      "800_2000": {"available": true, "effective_range_hz": [800, 2000], "relative_db": 0.0}
     }
   },
   "stereo": null
@@ -194,8 +194,11 @@ consumers should not compare old and new range values as the same statistic.
 Spectrum uses Welch's method with a Hann window and up to 4096 frames, averaging
 channel powers so antiphase stereo does not disappear. Frequency resolution and
 Nyquist are reported. Band IDs cover `<80`, `80-250`, `250-800`, `800-2000`,
-`2000-5000`, `5000-8000` and `>8000` Hz. `relative_db` is band power relative
-to total spectral power, not an absolute EQ control value.
+`2000-5000`, `5000-8000` and `>8000` Hz. Each band's `effective_range_hz`
+gives its lower and upper frequency bounds, with the upper bound capped at
+Nyquist. The range is `null` when the band starts at or above Nyquist.
+`relative_db` is band power relative to total spectral power, not an absolute
+EQ control value.
 
 Stereo reports L/R correlation and side/mid energy ratio dB, with separate mid
 and side RMS levels. `null` means undefined or unavailable, including silence,
@@ -272,6 +275,10 @@ matching undefined and is explicitly reported. Stereo deltas require two stereo
 clips. Gemini compares both uploads in one request and returns differences,
 which clip is brighter/more saturated/more compressed/more ambient, suggested
 adjustments and uncertainties.
+
+When the clips have different Nyquist frequencies, their relative energies use
+different normalization ranges. Relative band deltas are then `null` and the
+EQ direction hints list is empty.
 
 ## Privacy and limitations
 

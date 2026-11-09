@@ -48,10 +48,13 @@ def compare(a: AudioClip, b: AudioClip, focus: str | None = None) -> dict:
     metrics_a, metrics_b = measure(a), measure(b)
     matched_metrics_b = measure(matched_b)
     spectrum_a, spectrum_b = metrics_a["spectrum"], matched_metrics_b["spectrum"]
+    # Relative band powers use all frequencies through each clip's Nyquist.
+    same_bandwidth = spectrum_a["nyquist_hz"] == spectrum_b["nyquist_hz"]
     band_deltas = {
-        name: delta(
-            spectrum_a["bands"][name]["relative_db"],
-            spectrum_b["bands"][name]["relative_db"],
+        name: (
+            delta(spectrum_a["bands"][name]["relative_db"], spectrum_b["bands"][name]["relative_db"])
+            if same_bandwidth
+            else None
         )
         for name, _, _ in BANDS
     }
@@ -97,4 +100,9 @@ def compare(a: AudioClip, b: AudioClip, focus: str | None = None) -> dict:
     }
     if not matching["applied"]:
         result["cautions"].append(matching["reason"])
+    if not same_bandwidth:
+        result["cautions"].append(
+            "Relative band energies use different Nyquist frequencies, so band deltas "
+            "and EQ direction hints are unavailable."
+        )
     return {**result, **listen_comparison(a, matched_b, focus)}
