@@ -200,6 +200,8 @@ def test_missing_key_is_not_configured(audio, monkeypatch):
     assert result["failure"] == {
         "category": "not_configured", "http_status": None, "retryable": False,
         "suggestion": result["failure"]["suggestion"],
+        "retry_after_seconds": None, "retry_after_invalid": False,
+        "daily_request_limit": None, "daily_token_limit": None,
     }
     assert result["diagnostics"]["cache"] == "not_used"
 

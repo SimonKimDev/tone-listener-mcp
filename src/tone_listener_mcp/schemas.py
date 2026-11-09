@@ -22,7 +22,7 @@ FailureStage = Literal[
 FailureCategory = Literal[
     "not_configured", "audio_preparation", "authentication", "permission", "model_unavailable",
     "invalid_request", "quota", "capacity", "provider_error", "deadline", "busy", "network",
-    "upload_failed", "invalid_response", "local_io",
+    "upload_failed", "invalid_response", "local_io", "daily_quota", "rate_window",
 ]
 
 
@@ -104,6 +104,12 @@ class Failure(Response):
     http_status: int | None = Field(description="Provider HTTP status when one was returned")
     retryable: bool
     suggestion: str
+    retry_after_seconds: float | None = Field(
+        description="Longest valid Retry-After or RetryInfo delay, in seconds"
+    )
+    retry_after_invalid: bool
+    daily_request_limit: int | None
+    daily_token_limit: int | None
 
 
 class Usage(Response):
@@ -136,6 +142,15 @@ class Diagnostics(Response):
     preprocessing: list[Preprocessing]
 
 
+class RequestCounts(Response):
+    """SDK operation invocations in this call, including failed attempts and cleanup."""
+
+    generate: int
+    upload: int
+    poll_upload: int
+    delete_upload: int
+
+
 class ListeningFields(Response):
     model: str
     listening_unavailable: str | None = Field(
@@ -145,6 +160,7 @@ class ListeningFields(Response):
         description="Machine-readable failure category and recovery hint; never provider text"
     )
     diagnostics: Diagnostics
+    request_counts: RequestCounts
     cleanup_warnings: list[str]
     upload_gain_db: float
     upload_loudness_match: UploadLoudnessMatch | None

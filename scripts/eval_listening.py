@@ -24,10 +24,10 @@ from tone_listener_mcp.comparison import loudness_match
 from tone_listener_mcp.listener import (
     DEFAULT_MODEL,
     LISTENING_INSTRUCTIONS,
-    _youtube_input,
     listen,
     listen_comparison,
     listen_youtube_comparison,
+    youtube_input,
 )
 
 PAIRS = (
@@ -287,7 +287,7 @@ def load_manifest(path: Path) -> dict:
             for field in ("start", "end"):
                 _manifest_seconds(name, field, youtube.get(field))
             try:
-                canonical, start, end, _ = _youtube_input(
+                canonical, start, end, _ = youtube_input(
                     youtube["url"], youtube.get("start"), youtube.get("end")
                 )
             except ValueError as exc:
