@@ -74,13 +74,28 @@ class ListeningResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class Adjustment(BaseModel):
+    family: Literal[
+        "gain", "eq", "compression", "ambience", "delay", "modulation", "playing", "other"
+    ] = Field(description="Parameter family to change in B")
+    direction: str = Field(
+        description="Relative change to B, e.g. 'reduce reverb mix'; no gear names or knob values"
+    )
+    priority: int = Field(ge=1, le=5, description="1 = try first")
+    observation: str = Field(description="Audible evidence for this change")
+    alternative_explanation: str = Field(
+        description="Uncertainty, or another cause such as performance or mix"
+    )
+    listen_for: str = Field(description="What to check in B after making the change")
+
+
 class ComparisonResult(BaseModel):
     differences: list[str]
     brighter: Literal["A", "B", "similar", "uncertain"]
     more_saturated: Literal["A", "B", "similar", "uncertain"]
     more_compressed: Literal["A", "B", "similar", "uncertain"]
     more_ambient: Literal["A", "B", "similar", "uncertain"]
-    suggested_adjustments: list[str]
+    suggested_adjustments: list[Adjustment]
     uncertainties: list[str]
     confidence: float = Field(ge=0, le=1)
 
@@ -272,6 +287,8 @@ def listen_comparison(
         f"Compare reference A with candidate B. B has been RMS-matched to A over {basis} unless "
         "either is silent. Describe audible differences and suggest cautious adjustments to move "
         "B toward A. Use relative EQ/gain/effects directions, not invented gear or exact knobs. "
+        "Make each adjustment one testable experiment with its supporting observation, an "
+        "alternative explanation and what to listen for afterwards; order by priority, 1 first. "
         "Different performances, phrases and arrangements may invalidate tone comparisons."
     )
     if focus:
