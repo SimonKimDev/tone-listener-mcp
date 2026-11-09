@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 
 import numpy as np
 import pytest
@@ -61,6 +62,73 @@ def test_parameter_save_validation_rejects_ranges_and_unknown_keys():
     assert any("between -24 and 24" in item for item in errors)
     assert any("unsupported parameter" in item for item in errors)
     assert "__proto__" not in json.dumps(errors)
+
+
+@pytest.mark.parametrize("failure", ["cancel", "oserror", "runtimeerror"])
+def test_preview_save_failure_removes_untracked_wav(tmp_path, monkeypatch, failure):
+    from scripts.verify_workbench_renderer import verification_project
+    from tone_listener_mcp.workbench.models import ChainDraft, ChainNode
+    from tone_listener_mcp.workbench.renderer import SAMPLE_RATE
+
+    adapter = SoundshedAdapter(engine_version="1.7.3")
+    chain = ChainDraft(nodes=[
+        ChainNode(id="input", kind="input", title="Input"),
+        ChainNode(id="output", kind="output", title="Output"),
+    ])
+    monkeypatch.setattr(adapter, "self_test_chain", lambda: chain)
+    project = verification_project(adapter)
+    renderer = NativeRenderer(adapter)
+    monkeypatch.setattr(renderer, "initialize", lambda event: None)
+    renderer._trailer = b"test"
+    renderer._engine_version = "1.7.3"
+    renderer._canary = {"utility_gain_delta_db": 6.0}
+    monkeypatch.setattr(adapter, "host_state", lambda project, trailer: b"state")
+    monkeypatch.setattr(
+        renderer, "_render_raw",
+        lambda state, mono, event: np.repeat(mono[:, None], 2, axis=1),
+    )
+    monkeypatch.setattr(
+        "tone_listener_mcp.workbench.renderer.sf.read",
+        lambda *args, **kwargs: (np.full((SAMPLE_RATE, 1), 0.1), SAMPLE_RATE),
+    )
+    event = threading.Event()
+
+    def failed_write(path, rate, samples):
+        path.write_bytes(b"partial-or-complete-wav")
+        if failure == "cancel":
+            event.set()
+        elif failure == "oserror":
+            raise OSError("disk full")
+        else:
+            raise RuntimeError("writer failure")
+
+    monkeypatch.setattr("tone_listener_mcp.workbench.renderer.wavfile.write", failed_write)
+    message = "cancelled" if failure == "cancel" else "Could not save"
+    with pytest.raises(RenderError, match=message):
+        renderer.render(project, "riff-1", tmp_path, event)
+    assert not list(tmp_path.glob("*.wav"))
+
+
+@pytest.mark.parametrize("node_id", ["__input__", "__output__"])
+def test_adapter_rejects_reserved_processor_ids(node_id):
+    from scripts.verify_workbench_renderer import verification_project
+    from tone_listener_mcp.workbench.adapters.soundshed import AdapterError
+    from tone_listener_mcp.workbench.models import ChainDraft, ChainNode
+
+    adapter = SoundshedAdapter(engine_version="1.7.3")
+    chain = ChainDraft(nodes=[
+        ChainNode(id="input", kind="input", title="Input"),
+        ChainNode(id=node_id, kind="gain", title="Gain"),
+        ChainNode(id="output", kind="output", title="Output"),
+    ])
+    adapter.self_test_chain = lambda: chain
+    project = verification_project(adapter)
+    for for_render in (True, False):
+        assert any("reserved" in error for error in adapter.validate_chain(
+            chain, for_render=for_render,
+        ))
+    with pytest.raises(AdapterError, match="reserved"):
+        adapter.host_state(project, b"\0" * 8 + b"JUCEPrivateData" + b"\0" * 16)
 
 
 @pytest.mark.native_integration

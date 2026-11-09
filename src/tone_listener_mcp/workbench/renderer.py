@@ -402,11 +402,12 @@ class NativeRenderer:
         try:
             wavfile.write(wav_path, SAMPLE_RATE, stereo.astype("<f4"))
             _check_cancelled(cancel_event)
-        except (OSError, RuntimeError) as exc:
-            raise RenderError("Could not save the bounded preview WAV.") from exc
         except RenderError:
             wav_path.unlink(missing_ok=True)
             raise
+        except (OSError, RuntimeError) as exc:
+            wav_path.unlink(missing_ok=True)
+            raise RenderError("Could not save the bounded preview WAV.") from exc
         os.chmod(wav_path, 0o600)
         snapshot = snapshot.model_copy(update={"audio_sha256": _file_sha256(wav_path)})
         return RenderedAudio(samples=stereo, snapshot=snapshot, sample_name=sample_name)

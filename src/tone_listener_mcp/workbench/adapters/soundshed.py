@@ -548,6 +548,10 @@ class SoundshedAdapter:
     def validate_chain(self, chain: ChainDraft, *, for_render: bool = True) -> list[str]:
         errors: list[str] = []
         for node in chain.nodes:
+            if node.kind not in ("input", "output", "gear_note") and node.id in (
+                "__input__", "__output__"
+            ):
+                errors.append(f"{node.title}: node id is reserved for a Soundshed boundary")
             if node.kind == "gear_note":
                 if for_render and node.note_role == "blocking":
                     errors.append(f"{node.title}: unresolved gear note prevents rendering")
