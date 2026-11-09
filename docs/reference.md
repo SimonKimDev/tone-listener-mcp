@@ -51,8 +51,8 @@ perceptual loudness measurement. This replaces the original max/min range;
 consumers should not compare old and new range values as the same statistic.
 Spectrum uses Welch's method with a Hann window and up to 4096 frames, averaging
 channel powers so antiphase stereo does not disappear. Frequency resolution and
-Nyquist are reported. Band IDs cover `<80`, `80-250`, `250-800`, `800-2000`,
-`2000-5000`, `5000-8000` and `>8000` Hz. Each band's `effective_range_hz`
+Nyquist are reported. Band IDs are `below_80`, `80_250`, `250_800`, `800_2000`,
+`2000_5000`, `5000_8000` and `above_8000` (Hz ranges). Each band's `effective_range_hz`
 gives its lower and upper frequency bounds, with the upper bound capped at
 Nyquist. The range is `null` when the band starts at or above Nyquist.
 `relative_db` is band power relative to total spectral power, not an absolute
