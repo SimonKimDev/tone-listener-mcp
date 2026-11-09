@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 
 from tone_listener_mcp.audio_io import AudioClip
-from tone_listener_mcp.listener import listen_comparison
+from tone_listener_mcp.listener import listen_comparison, listen_youtube_comparison
 from tone_listener_mcp.metrics import (
     BANDS,
     GATE_ABSOLUTE_DBFS,
@@ -230,4 +231,68 @@ def compare(
             "Relative band energies use different Nyquist frequencies, so band deltas "
             "and EQ direction hints are unavailable."
         )
+    result["available_analyses"] = {
+        "semantic_listening": True,
+        "rms_matching": True,
+        "spectral_deltas": True,
+    }
     return {**result, **listen_comparison(a, matched_b, focus, matching)}
+
+
+@dataclass(frozen=True)
+class YouTubeReference:
+    """A public YouTube interval used as reference A; no local waveform is available."""
+
+    url: str
+    start: float | None = None
+    end: float | None = None
+
+
+Reference = AudioClip | YouTubeReference
+
+LOCAL_REFERENCE_REQUIRED = (
+    "Requires a local reference waveform; a YouTube reference is only listened to by Gemini, "
+    "never downloaded or decoded locally"
+)
+
+
+def compare_reference(
+    reference: Reference,
+    candidate: AudioClip,
+    focus: str | None = None,
+    matching: MatchingStrategy = "active",
+) -> dict:
+    """Compare candidate B with a local or YouTube reference A.
+
+    `available_analyses` states which parts a source combination supports: RMS matching
+    and spectral deltas need both waveforms locally; semantic listening needs a Gemini key.
+    """
+    if isinstance(reference, AudioClip):
+        return compare(reference, candidate, focus, matching)
+    listened = listen_youtube_comparison(
+        reference.url, reference.start, reference.end, candidate, focus
+    )
+    return {
+        "available_analyses": {
+            "semantic_listening": True,
+            "rms_matching": False,
+            "spectral_deltas": False,
+        },
+        "unavailable_analyses": {
+            "rms_matching": LOCAL_REFERENCE_REQUIRED,
+            "spectral_deltas": LOCAL_REFERENCE_REQUIRED,
+        },
+        "metrics_b": measure(candidate),
+        "cautions": [
+            (
+                "A and B are not loudness-matched; the YouTube reference uses a lossy codec and "
+                "often a full mix, so judge tone direction rather than level or top-end detail."
+            ),
+            "Use the same riff or phrase; performance and arrangement affect comparisons.",
+            (
+                "For objective RMS matching and spectral deltas, use compare_audio with a local "
+                "recording of the reference that you are permitted to use."
+            ),
+        ],
+        **listened,
+    }

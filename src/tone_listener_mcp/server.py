@@ -8,7 +8,7 @@ from mcp.server.mcpserver import MCPServer
 
 from tone_listener_mcp import __version__
 from tone_listener_mcp.audio_io import load_audio
-from tone_listener_mcp.comparison import compare
+from tone_listener_mcp.comparison import YouTubeReference, compare, compare_reference
 from tone_listener_mcp.listener import listen, listen_youtube
 from tone_listener_mcp.metrics import measure
 from tone_listener_mcp.schemas import (
@@ -16,6 +16,7 @@ from tone_listener_mcp.schemas import (
     AnalyzeYouTubeResponse,
     AudioMetrics,
     CompareResponse,
+    CompareYouTubeResponse,
     ServerInfo,
 )
 
@@ -24,6 +25,7 @@ mcp = MCPServer(
     version=__version__,
     instructions=(
         "Start with analyze_youtube for a public YouTube guitar-tone reference. "
+        "Use compare_youtube_reference to compare that reference with a local recording. "
         "Use local audio_metrics/analyze_audio/compare_audio when waveform measurements are needed."
     ),
 )
@@ -93,6 +95,27 @@ def compare_audio(
         focus,
         matching,
     ))
+
+
+@mcp.tool(structured_output=True)
+def compare_youtube_reference(
+    url: str,
+    path_b: str,
+    start: float | None = None,
+    end: float | None = None,
+    start_b: float | None = None,
+    end_b: float | None = None,
+    focus: str | None = None,
+) -> CompareYouTubeResponse:
+    """Compare a local candidate B with a public YouTube reference interval A via Gemini.
+
+    Provides semantic listening differences and prioritized adjustments only: RMS matching
+    and spectral deltas need a local reference (see available_analyses). start/end select
+    the YouTube interval; start_b/end_b select the local file.
+    """
+    reference = YouTubeReference(url, start, end)
+    candidate = load_audio(path_b, start_b, end_b)
+    return CompareYouTubeResponse.model_validate(compare_reference(reference, candidate, focus))
 
 
 def main() -> None:

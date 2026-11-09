@@ -13,6 +13,8 @@ or compute local DSP metrics**. It requires Gemini inference access.
 
 Local-file measurement and RMS-matched comparison are also available when you
 have recordings. These retain local metrics even without a Gemini key.
+`compare_youtube_reference` answers "here's the reference, here's my recording,
+what should I change first?" by comparing a YouTube interval with a local file.
 
 ## YouTube quickstart
 
@@ -146,7 +148,8 @@ limit is exceeded.
 | `analyze_youtube` | `url`, optional `start`, `end`, `question` | Primary public YouTube listening; `metrics: null`, no local audio extraction |
 | `audio_metrics` | `path`, optional `start`, `end` | Local clip metadata, level, spectrum and stereo metrics; never uploads |
 | `analyze_audio` | `path`, optional `start`, `end`, `question` | Local `metrics` plus Gemini `listening`, or `listening_unavailable` |
-| `compare_audio` | `path_a`, `path_b`, optional `start_a`, `end_a`, `start_b`, `end_b`, `focus` | Reference A vs candidate B, RMS matching, deltas, EQ directions and optional A/B listening |
+| `compare_audio` | `path_a`, `path_b`, optional `start_a`, `end_a`, `start_b`, `end_b`, `focus`, `matching` | Reference A vs candidate B, RMS matching, deltas, EQ directions and optional A/B listening |
+| `compare_youtube_reference` | `url`, `path_b`, optional `start`, `end`, `start_b`, `end_b`, `focus` | YouTube reference A vs local candidate B: Gemini listening differences and prioritized adjustments only |
 
 Example requests to an agent's MCP tool interface:
 
@@ -224,6 +227,26 @@ For YouTube, the result also reports the normalized `source` URL/interval,
 It uses the documented video URI/interval metadata through the Gemini API;
 no downloader or local files are involved. A missing key returns a clear
 YouTube-listening-unavailable reason, with no pretend local metrics.
+
+### YouTube reference vs local recording
+
+`compare_youtube_reference` sends the YouTube interval (clip A) and your
+selected local clip (clip B, uploaded as 16 kHz mono) to Gemini in one request
+and returns the same `listening` comparison as `compare_audio`, including
+prioritized `suggested_adjustments`. `available_analyses` states what a source
+combination supports:
+
+| Reference A | Candidate B | `semantic_listening` | `rms_matching` | `spectral_deltas` |
+|---|---|---|---|---|
+| Local file (`compare_audio`) | Local file | yes | yes | yes |
+| YouTube interval (`compare_youtube_reference`) | Local file | yes | no | no |
+
+Objective matching and deltas need the reference waveform locally, and the
+YouTube reference is never downloaded or decoded; `unavailable_analyses`
+explains why. The result reports `reference`, B's local `metrics_b`,
+`input_transport: "youtube_url+files"` and cautions. A and B are not
+loudness-matched, and the model is told that codec, bandwidth, channel and mix
+differences are not tone differences. Semantic listening still requires a key.
 
 For local-file analysis, no key gives an explicit local-only response:
 
@@ -321,7 +344,8 @@ local waveform or persist a media file. Public video processing is subject to
 Google's supported YouTube-input rules, quotas and terms.
 
 `analyze_audio` uploads the selected clip to Google,
-and `compare_audio` uploads both selected clips. Only use recordings you have
+`compare_audio` uploads both selected clips, and `compare_youtube_reference`
+sends the public video URL/interval plus the selected local clip. Only use recordings you have
 permission to share. `audio_metrics` is always local. Temporary WAVs are deleted
 on exit; uploaded files are deleted after the request, including most failure
 paths. Cleanup failures are returned in `cleanup_warnings`. Remote handling and

@@ -296,3 +296,63 @@ def test_youtube_evidence_bounds(client, listening_payload):
     result = listen_youtube("https://youtu.be/401iS5McuoU", 0, 30)
     assert result["listening"] is None
     assert result["listening_failure_stage"] == "validate"
+
+
+def test_youtube_reference_with_local_candidate(monkeypatch):
+    from tone_listener_mcp.comparison import YouTubeReference, compare_reference
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    created = []
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.files.upload.return_value = SimpleNamespace(
+        name="files/B", uri="https://example.invalid/B", state=types.FileState.ACTIVE
+    )
+    client.models.generate_content.return_value.text = json.dumps({
+        "differences": ["A has more ambience"], "brighter": "similar",
+        "more_saturated": "A", "more_compressed": "similar", "more_ambient": "A",
+        "suggested_adjustments": [{
+            "family": "gain", "direction": "add drive to B", "priority": 1,
+            "observation": "A breaks up on harder picking", "alternative_explanation":
+            "A's mix may add compression", "listen_for": "Breakup on accented notes",
+        }],
+        "uncertainties": [], "confidence": 0.6,
+    })
+
+    def make_client(**kwargs):
+        created.append(kwargs)
+        return client
+
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", make_client)
+    tone = 0.2 * np.sin(2 * np.pi * 220 * np.arange(32000) / 16000)
+    candidate = AudioClip(np.atleast_2d(tone).astype(np.float32), 16000, "private-local-path")
+    result = compare_reference(
+        YouTubeReference("https://www.youtube.com/watch?v=9hE5-98ZeCg", 12, 16), candidate, "drive"
+    )
+    assert result["listening_unavailable"] is None
+    assert result["listening"]["suggested_adjustments"][0]["family"] == "gain"
+    assert result["input_transport"] == "youtube_url+files"
+    assert result["upload_loudness_match"] is None
+    assert created[0]["http_options"].api_version == "v1beta"
+    client.files.upload.assert_called_once()
+    client.files.delete.assert_called_once_with(name="files/B")
+    call = client.models.generate_content.call_args.kwargs
+    contents = call["contents"]
+    assert "candidate B" in contents[0] and "NOT loudness-matched" in contents[0]
+    assert contents[1] == "Clip A (public YouTube reference, 4.000 seconds)"
+    assert contents[2].file_data.file_uri == "https://www.youtube.com/watch?v=9hE5-98ZeCg"
+    assert contents[2].video_metadata.start_offset == "12s"
+    assert contents[3] == "Clip B (2.000 seconds)"
+    assert contents[4].file_data.file_uri == "https://example.invalid/B"
+    instructions = call["config"].system_instruction
+    assert "Clip A is a public YouTube video interval" in instructions
+    assert "codec, bandwidth" in instructions
+
+
+def test_youtube_reference_rejects_invalid_url_before_requests(monkeypatch):
+    from tone_listener_mcp.comparison import YouTubeReference, compare_reference
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    candidate = AudioClip(np.zeros((1, 16000), dtype=np.float32) + 0.1, 16000, "x")
+    with pytest.raises(ValueError, match="YouTube"):
+        compare_reference(YouTubeReference("https://example.invalid/v"), candidate)

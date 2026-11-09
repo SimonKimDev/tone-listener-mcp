@@ -33,7 +33,8 @@ def test_stdio_tools(tmp_path):
             await session.initialize()
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == {
-                "server_info", "audio_metrics", "analyze_audio", "compare_audio", "analyze_youtube"
+                "server_info", "audio_metrics", "analyze_audio", "compare_audio",
+                "analyze_youtube", "compare_youtube_reference",
             }
             schemas = {tool.name: tool.output_schema for tool in tools.tools}
             compare_schema = schemas["compare_audio"]
@@ -66,6 +67,13 @@ def test_stdio_tools(tmp_path):
             assert youtube.structured_content["metrics"] is None
             assert youtube.structured_content["listening_unavailable"]
             assert youtube.structured_content["input_transport"] == "youtube_url"
+            mixed = await session.call_tool(
+                "compare_youtube_reference",
+                {"url": "https://youtu.be/9hE5-98ZeCg", "path_b": str(path), "start": 1, "end": 5},
+            )
+            assert not mixed.is_error
+            assert mixed.structured_content["available_analyses"]["rms_matching"] is False
+            assert mixed.structured_content["listening_unavailable"]
             invalid_url = await session.call_tool(
                 "analyze_youtube", {"url": "https://example.invalid/video"}
             )
