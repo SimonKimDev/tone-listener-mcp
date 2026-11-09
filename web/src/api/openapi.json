@@ -1,0 +1,2559 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tone Listener Workbench",
+    "version": "1.0"
+  },
+  "paths": {
+    "/api/session": {
+      "get": {
+        "summary": "Session",
+        "operationId": "session_api_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Session Api Session Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/catalog": {
+      "get": {
+        "summary": "Catalog",
+        "operationId": "catalog_api_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdapterCatalog"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "summary": "List Projects",
+        "operationId": "list_projects_api_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectSummary"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api Projects Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}": {
+      "get": {
+        "summary": "Get Project",
+        "operationId": "get_project_api_projects__project_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToneProject"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads": {
+      "post": {
+        "summary": "Upload Audio",
+        "operationId": "upload_audio_api_uploads_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_audio_api_uploads_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/uploads/{upload_id}": {
+      "delete": {
+        "summary": "Discard Upload",
+        "operationId": "discard_upload_api_uploads__upload_id__delete",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analysis/preflight": {
+      "post": {
+        "summary": "Preflight Analysis",
+        "operationId": "preflight_analysis_api_analysis_preflight_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisPreflight"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/analysis": {
+      "post": {
+        "summary": "Start Analysis",
+        "operationId": "start_analysis_api_jobs_analysis_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/chain": {
+      "put": {
+        "summary": "Update Chain",
+        "operationId": "update_chain_api_projects__project_id__chain_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChainUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToneProject"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/profile": {
+      "post": {
+        "summary": "Select Profile",
+        "operationId": "select_profile_api_projects__project_id__profile_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSelectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToneProject"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/jobs/preview": {
+      "post": {
+        "summary": "Start Preview",
+        "operationId": "start_preview_api_projects__project_id__jobs_preview_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "summary": "Get Job",
+        "operationId": "get_job_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/cancel": {
+      "post": {
+        "summary": "Cancel Job",
+        "operationId": "cancel_job_api_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/previews": {
+      "get": {
+        "summary": "Project Previews",
+        "operationId": "project_previews_api_projects__project_id__previews_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PreviewSnapshot"
+                  },
+                  "title": "Response Project Previews Api Projects  Project Id  Previews Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/previews/{preview_id}/audio": {
+      "get": {
+        "summary": "Preview Audio",
+        "operationId": "preview_audio_api_projects__project_id__previews__preview_id__audio_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preview Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/samples/{sample_name}": {
+      "get": {
+        "summary": "Sample Audio",
+        "operationId": "sample_audio_api_samples__sample_name__get",
+        "parameters": [
+          {
+            "name": "sample_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sample Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/export": {
+      "post": {
+        "summary": "Export Preset",
+        "operationId": "export_preset_api_projects__project_id__export_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Frontend",
+        "operationId": "frontend__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/youtube-player.html": {
+      "get": {
+        "summary": "Isolated Youtube Player",
+        "operationId": "isolated_youtube_player_youtube_player_html_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdapterCatalog": {
+        "properties": {
+          "adapter_id": {
+            "type": "string",
+            "title": "Adapter Id"
+          },
+          "adapter_label": {
+            "type": "string",
+            "title": "Adapter Label"
+          },
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/BlockDefinition"
+            },
+            "type": "array",
+            "title": "Blocks"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceDefinition"
+            },
+            "type": "array",
+            "title": "Resources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "adapter_id",
+          "adapter_label",
+          "engine_version",
+          "blocks",
+          "resources"
+        ],
+        "title": "AdapterCatalog"
+      },
+      "AnalysisFailure": {
+        "properties": {
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 599.0,
+                "minimum": 100.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "authentication",
+              "permission",
+              "model_unavailable",
+              "quota_unspecified",
+              "daily_quota",
+              "rate_window",
+              "capacity",
+              "request_failure"
+            ],
+            "title": "Category"
+          },
+          "retry_after_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Seconds"
+          },
+          "retry_after_invalid": {
+            "type": "boolean",
+            "title": "Retry After Invalid",
+            "default": false
+          },
+          "daily_request_limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Request Limit"
+          },
+          "daily_token_limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Token Limit"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "category"
+        ],
+        "title": "AnalysisFailure"
+      },
+      "AnalysisPreflight": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "refresh": {
+            "type": "boolean",
+            "title": "Refresh"
+          },
+          "intervals": {
+            "items": {
+              "$ref": "#/components/schemas/IntervalPlan"
+            },
+            "type": "array",
+            "title": "Intervals"
+          },
+          "reused": {
+            "type": "integer",
+            "title": "Reused"
+          },
+          "shared_in_flight": {
+            "type": "integer",
+            "title": "Shared In Flight"
+          },
+          "max_new_requests": {
+            "type": "integer",
+            "title": "Max New Requests"
+          },
+          "provider_contacted": {
+            "type": "boolean",
+            "const": false,
+            "title": "Provider Contacted",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model",
+          "refresh",
+          "intervals",
+          "reused",
+          "shared_in_flight",
+          "max_new_requests"
+        ],
+        "title": "AnalysisPreflight"
+      },
+      "AnalysisRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "youtube",
+              "audio_file"
+            ],
+            "title": "Kind"
+          },
+          "youtube_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Url"
+          },
+          "upload_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Id"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 86400.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "intervals": {
+            "items": {
+              "$ref": "#/components/schemas/Interval"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Intervals"
+          },
+          "refresh": {
+            "type": "boolean",
+            "title": "Refresh",
+            "default": false
+          },
+          "external_consent": {
+            "type": "boolean",
+            "title": "External Consent",
+            "default": false
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "max_new_requests": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max New Requests"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "intervals"
+        ],
+        "title": "AnalysisRequest"
+      },
+      "AnalysisReuse": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cache",
+              "shared_in_flight"
+            ],
+            "title": "Kind"
+          },
+          "analyzed_at": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Analyzed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "analyzed_at"
+        ],
+        "title": "AnalysisReuse",
+        "description": "This job did not send this interval to the provider; the result came from elsewhere."
+      },
+      "AnalysisSegment": {
+        "properties": {
+          "interval": {
+            "$ref": "#/components/schemas/Interval"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "listening": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListeningResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToneProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable"
+          },
+          "failure_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_attempted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Attempted"
+          },
+          "reuse": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisReuse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "interval",
+          "model"
+        ],
+        "title": "AnalysisSegment"
+      },
+      "AnalysisSourceRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "youtube",
+              "audio_file"
+            ],
+            "title": "Kind"
+          },
+          "youtube_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Url"
+          },
+          "upload_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Id"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 86400.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "intervals": {
+            "items": {
+              "$ref": "#/components/schemas/Interval"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Intervals"
+          },
+          "refresh": {
+            "type": "boolean",
+            "title": "Refresh",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "intervals"
+        ],
+        "title": "AnalysisSourceRequest"
+      },
+      "AssetRef": {
+        "properties": {
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "nam",
+              "ir"
+            ],
+            "title": "Resource Type"
+          },
+          "resource_id": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Resource Id"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name"
+          },
+          "capture_scope": {
+            "type": "string",
+            "enum": [
+              "pedal",
+              "amp",
+              "unknown"
+            ],
+            "title": "Capture Scope",
+            "default": "unknown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "resource_type",
+          "resource_id",
+          "sha256",
+          "display_name"
+        ],
+        "title": "AssetRef"
+      },
+      "BlockDefinition": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "input",
+              "nam_fx",
+              "nam_amp",
+              "cab_ir",
+              "parametric_eq",
+              "room_reverb",
+              "digital_delay",
+              "chorus",
+              "gain",
+              "gear_note",
+              "output"
+            ],
+            "title": "Kind"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/ParameterSpec"
+            },
+            "type": "array",
+            "title": "Parameters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "label",
+          "description"
+        ],
+        "title": "BlockDefinition"
+      },
+      "Body_upload_audio_api_uploads_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_audio_api_uploads_post"
+      },
+      "ChainDraft": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision",
+            "default": 1
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/ChainNode"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "minItems": 2,
+            "title": "Nodes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "nodes"
+        ],
+        "title": "ChainDraft"
+      },
+      "ChainNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "input",
+              "nam_fx",
+              "nam_amp",
+              "cab_ir",
+              "parametric_eq",
+              "room_reverb",
+              "digital_delay",
+              "chorus",
+              "gain",
+              "gear_note",
+              "output"
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "params": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Params"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "note_role": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "omitted_optional"
+            ],
+            "title": "Note Role",
+            "default": "blocking"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "title"
+        ],
+        "title": "ChainNode"
+      },
+      "ChainUpdateRequest": {
+        "properties": {
+          "base_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Base Revision"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/ChainNode"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "minItems": 2,
+            "title": "Nodes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_revision",
+          "nodes"
+        ],
+        "title": "ChainUpdateRequest"
+      },
+      "Effect": {
+        "properties": {
+          "presence": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "possible",
+              "present"
+            ],
+            "title": "Presence"
+          },
+          "amount": {
+            "type": "string",
+            "title": "Amount"
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "presence",
+          "amount",
+          "notes"
+        ],
+        "title": "Effect"
+      },
+      "Effects": {
+        "properties": {
+          "reverb": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "delay": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "modulation": {
+            "$ref": "#/components/schemas/Effect"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reverb",
+          "delay",
+          "modulation"
+        ],
+        "title": "Effects"
+      },
+      "Evidence": {
+        "properties": {
+          "timestamp": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Timestamp"
+          },
+          "observation": {
+            "type": "string",
+            "title": "Observation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "observation"
+        ],
+        "title": "Evidence"
+      },
+      "ExportRequest": {
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "title": "Preview Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preview_id"
+        ],
+        "title": "ExportRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ready",
+            "title": "Status"
+          },
+          "model_configured": {
+            "type": "boolean",
+            "title": "Model Configured"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version"
+          },
+          "renderer_binary_available": {
+            "type": "boolean",
+            "title": "Renderer Binary Available"
+          },
+          "renderer_available": {
+            "type": "boolean",
+            "title": "Renderer Available"
+          },
+          "renderer_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Renderer Error"
+          },
+          "samples": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Samples"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "model_configured",
+          "model",
+          "engine_version",
+          "renderer_binary_available",
+          "renderer_available",
+          "renderer_error",
+          "samples"
+        ],
+        "title": "HealthResponse"
+      },
+      "Interval": {
+        "properties": {
+          "start_seconds": {
+            "type": "number",
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Start Seconds"
+          },
+          "end_seconds": {
+            "type": "number",
+            "maximum": 86430.0,
+            "exclusiveMinimum": 0.0,
+            "title": "End Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start_seconds",
+          "end_seconds"
+        ],
+        "title": "Interval"
+      },
+      "IntervalPlan": {
+        "properties": {
+          "interval": {
+            "$ref": "#/components/schemas/Interval"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "cache",
+              "shared_in_flight",
+              "new"
+            ],
+            "title": "Status"
+          },
+          "analyzed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analyzed At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "interval",
+          "status"
+        ],
+        "title": "IntervalPlan"
+      },
+      "JobStatus": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "analysis",
+              "preview",
+              "refinement"
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "partial",
+              "failed",
+              "cancelled",
+              "stale"
+            ],
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "progress",
+          "message"
+        ],
+        "title": "JobStatus"
+      },
+      "ListeningResult": {
+        "properties": {
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "gain_level": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "edge-of-breakup",
+              "crunch",
+              "overdrive",
+              "distortion",
+              "high-gain",
+              "uncertain"
+            ],
+            "title": "Gain Level"
+          },
+          "brightness": {
+            "type": "string",
+            "title": "Brightness"
+          },
+          "low_end": {
+            "type": "string",
+            "title": "Low End"
+          },
+          "mids_character": {
+            "type": "string",
+            "title": "Mids Character"
+          },
+          "pick_attack": {
+            "type": "string",
+            "title": "Pick Attack"
+          },
+          "compression_feel": {
+            "type": "string",
+            "title": "Compression Feel"
+          },
+          "effects": {
+            "$ref": "#/components/schemas/Effects"
+          },
+          "playing_notes": {
+            "type": "string",
+            "title": "Playing Notes"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "uncertainties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Uncertainties"
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "summary",
+          "gain_level",
+          "brightness",
+          "low_end",
+          "mids_character",
+          "pick_attack",
+          "compression_feel",
+          "effects",
+          "playing_notes",
+          "evidence",
+          "uncertainties",
+          "confidence"
+        ],
+        "title": "ListeningResult"
+      },
+      "ParameterSpec": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "minimum": {
+            "type": "number",
+            "title": "Minimum"
+          },
+          "maximum": {
+            "type": "number",
+            "title": "Maximum"
+          },
+          "default": {
+            "type": "number",
+            "title": "Default"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "minimum",
+          "maximum",
+          "default",
+          "unit",
+          "description"
+        ],
+        "title": "ParameterSpec"
+      },
+      "PreviewRequest": {
+        "properties": {
+          "project_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Project Revision"
+          },
+          "chain_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Chain Revision"
+          },
+          "sample_name": {
+            "type": "string",
+            "enum": [
+              "riff-1",
+              "riff-2",
+              "lead-1",
+              "lead-2"
+            ],
+            "title": "Sample Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_revision",
+          "chain_revision",
+          "sample_name"
+        ],
+        "title": "PreviewRequest"
+      },
+      "PreviewSnapshot": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Project Revision"
+          },
+          "chain_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Chain Revision"
+          },
+          "chain_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Chain Sha256"
+          },
+          "sample_name": {
+            "type": "string",
+            "enum": [
+              "riff-1",
+              "riff-2",
+              "lead-1",
+              "lead-2"
+            ],
+            "title": "Sample Name"
+          },
+          "source_sample_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Source Sample Sha256"
+          },
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Sample Rate"
+          },
+          "dsp_conditions": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Dsp Conditions"
+          },
+          "audio_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Audio Sha256"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "maximum": 40.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Duration Seconds"
+          },
+          "rms": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Rms"
+          },
+          "peak": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Peak"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_revision",
+          "chain_revision",
+          "chain_sha256",
+          "sample_name",
+          "source_sample_sha256",
+          "engine_version",
+          "sample_rate",
+          "dsp_conditions",
+          "audio_sha256",
+          "duration_seconds",
+          "rms",
+          "peak",
+          "created_at"
+        ],
+        "title": "PreviewSnapshot"
+      },
+      "ProfileEffect": {
+        "properties": {
+          "presence": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "possible",
+              "present",
+              "uncertain"
+            ],
+            "title": "Presence"
+          },
+          "prominence": {
+            "type": "string",
+            "enum": [
+              "none",
+              "subtle",
+              "moderate",
+              "prominent",
+              "uncertain"
+            ],
+            "title": "Prominence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "presence",
+          "prominence"
+        ],
+        "title": "ProfileEffect"
+      },
+      "ProfileSelectionRequest": {
+        "properties": {
+          "base_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Base Revision"
+          },
+          "analysis_index": {
+            "type": "integer",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Analysis Index"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_revision",
+          "analysis_index"
+        ],
+        "title": "ProfileSelectionRequest"
+      },
+      "ProjectSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "youtube",
+              "audio_file"
+            ],
+            "title": "Source Kind"
+          },
+          "source_name": {
+            "type": "string",
+            "title": "Source Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "updated_at",
+          "source_kind",
+          "source_name"
+        ],
+        "title": "ProjectSummary"
+      },
+      "ResourceDefinition": {
+        "properties": {
+          "asset": {
+            "$ref": "#/components/schemas/AssetRef"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "file_size_bytes": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "File Size Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "asset",
+          "provider",
+          "file_size_bytes"
+        ],
+        "title": "ResourceDefinition"
+      },
+      "SourceRef": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "youtube",
+              "audio_file"
+            ],
+            "title": "Kind"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 86400.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "selected_intervals": {
+            "items": {
+              "$ref": "#/components/schemas/Interval"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Selected Intervals"
+          },
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "display_name",
+          "selected_intervals"
+        ],
+        "title": "SourceRef"
+      },
+      "TargetBinding": {
+        "properties": {
+          "adapter_id": {
+            "type": "string",
+            "title": "Adapter Id"
+          },
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version"
+          },
+          "resources": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AssetRef"
+            },
+            "type": "object",
+            "title": "Resources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "adapter_id",
+          "engine_version"
+        ],
+        "title": "TargetBinding"
+      },
+      "ToneIntent": {
+        "properties": {
+          "summary": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "observations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Observations"
+          },
+          "uncertainties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Uncertainties"
+          },
+          "gear_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Gear Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "summary"
+        ],
+        "title": "ToneIntent"
+      },
+      "ToneProfile": {
+        "properties": {
+          "guitar_dominance": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "mixed",
+              "uncertain"
+            ],
+            "title": "Guitar Dominance"
+          },
+          "gain": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "edge-of-breakup",
+              "crunch",
+              "overdrive",
+              "distortion",
+              "high-gain",
+              "uncertain"
+            ],
+            "title": "Gain"
+          },
+          "brightness": {
+            "type": "string",
+            "enum": [
+              "dark",
+              "slightly-dark",
+              "balanced",
+              "slightly-bright",
+              "bright",
+              "uncertain"
+            ],
+            "title": "Brightness"
+          },
+          "bass_level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "typical",
+              "high",
+              "uncertain"
+            ],
+            "title": "Bass Level"
+          },
+          "bass_tightness": {
+            "type": "string",
+            "enum": [
+              "loose",
+              "neutral",
+              "tight",
+              "uncertain"
+            ],
+            "title": "Bass Tightness"
+          },
+          "mids": {
+            "type": "string",
+            "enum": [
+              "scooped",
+              "neutral",
+              "present",
+              "forward",
+              "uncertain"
+            ],
+            "title": "Mids"
+          },
+          "attack": {
+            "type": "string",
+            "enum": [
+              "soft",
+              "rounded",
+              "balanced",
+              "sharp",
+              "uncertain"
+            ],
+            "title": "Attack"
+          },
+          "compression": {
+            "type": "string",
+            "enum": [
+              "dynamic",
+              "moderate",
+              "compressed",
+              "squashed",
+              "uncertain"
+            ],
+            "title": "Compression"
+          },
+          "sustain": {
+            "type": "string",
+            "enum": [
+              "short",
+              "typical",
+              "long",
+              "uncertain"
+            ],
+            "title": "Sustain"
+          },
+          "reverb": {
+            "$ref": "#/components/schemas/ProfileEffect"
+          },
+          "delay": {
+            "$ref": "#/components/schemas/ProfileEffect"
+          },
+          "modulation": {
+            "$ref": "#/components/schemas/ProfileEffect"
+          },
+          "modulation_type": {
+            "type": "string",
+            "enum": [
+              "none",
+              "chorus",
+              "flanger",
+              "phaser",
+              "tremolo",
+              "other",
+              "uncertain"
+            ],
+            "title": "Modulation Type",
+            "default": "uncertain"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "uncertainties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Uncertainties"
+          }
+        },
+        "type": "object",
+        "required": [
+          "guitar_dominance",
+          "gain",
+          "brightness",
+          "bass_level",
+          "bass_tightness",
+          "mids",
+          "attack",
+          "compression",
+          "sustain",
+          "reverb",
+          "delay",
+          "modulation",
+          "evidence",
+          "uncertainties"
+        ],
+        "title": "ToneProfile",
+        "description": "Fixed categorical axes for selected workbench intent and blinded evaluation."
+      },
+      "ToneProject": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Schema Version",
+            "default": 1
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision",
+            "default": 1
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRef"
+          },
+          "analysis": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisSegment"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Analysis"
+          },
+          "selected_analysis_index": {
+            "type": "integer",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Selected Analysis Index",
+            "default": 0
+          },
+          "intent": {
+            "$ref": "#/components/schemas/ToneIntent"
+          },
+          "chain": {
+            "$ref": "#/components/schemas/ChainDraft"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetBinding"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "synthetic_fixture": {
+            "type": "boolean",
+            "title": "Synthetic Fixture",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "source",
+          "analysis",
+          "intent",
+          "chain",
+          "target",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ToneProject"
+      },
+      "UploadResponse": {
+        "properties": {
+          "upload_id": {
+            "type": "string",
+            "title": "Upload Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "title": "Duration Seconds"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "title": "Sample Rate"
+          },
+          "channels": {
+            "type": "integer",
+            "title": "Channels"
+          },
+          "file_size_bytes": {
+            "type": "integer",
+            "title": "File Size Bytes"
+          },
+          "intervals": {
+            "items": {
+              "$ref": "#/components/schemas/Interval"
+            },
+            "type": "array",
+            "title": "Intervals"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "title": "Expires In Seconds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "upload_id",
+          "display_name",
+          "duration_seconds",
+          "sample_rate",
+          "channels",
+          "file_size_bytes",
+          "intervals",
+          "expires_in_seconds"
+        ],
+        "title": "UploadResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

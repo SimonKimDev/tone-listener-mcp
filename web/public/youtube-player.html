@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Reference video</title>
+<style>html,body{margin:0;background:#111}#player{width:100%;height:210px}</style>
+<div id="player"></div>
+<script>
+  const videoId = new URLSearchParams(location.search).get("v") || "";
+  let timer;
+  const deadline = setTimeout(() => {
+    clearInterval(timer);
+    parent.postMessage({type: "tone-duration-unavailable", videoId}, "*");
+  }, 19000);
+  window.onYouTubeIframeAPIReady = () => {
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return;
+    new YT.Player("player", {
+      videoId, width: "100%", height: "210",
+      playerVars: {playsinline: 1, rel: 0},
+      events: {
+        onReady: ({target}) => {
+          const read = () => {
+            const duration = target.getDuration();
+            if (Number.isFinite(duration) && duration > 0) {
+              clearTimeout(deadline);
+              clearInterval(timer);
+              parent.postMessage({type: "tone-duration", videoId, duration}, "*");
+              return true;
+            }
+            return false;
+          };
+          if (!read()) timer = setInterval(read, 500);
+        },
+      },
+    });
+  };
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</html>

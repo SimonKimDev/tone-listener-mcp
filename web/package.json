@@ -1,0 +1,26 @@
+{
+  "name": "tone-listener-workbench-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "generate:api": "python3 ../scripts/export_workbench_openapi.py && openapi-typescript src/api/openapi.json -o src/api/schema.d.ts",
+    "dev": "vite --host 127.0.0.1",
+    "build": "npm run generate:api && tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.8.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "openapi-typescript": "^7.8.0",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}
