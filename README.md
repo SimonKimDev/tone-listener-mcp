@@ -325,8 +325,9 @@ possible; start/end should cover equivalent musical material.
 See [controlled validation](docs/validation.md) for known gain, soft clipping,
 EQ and simple reverb variants. Tests are synthetic/offline with mocked Gemini;
 the stdio integration test spawns the real server and exercises all five tools.
-GitHub Actions runs lint and tests on Python 3.11 and 3.12 on push or manual
-dispatch. The opt-in `scripts.eval_listening` harness runs blinded, swapped A/B
+GitHub Actions runs lint and tests on Python 3.11 and 3.12 for every pull
+request (including forks), pushes to `main` and manual dispatch; the `ci-passed`
+job is the required status check for merging into `main`. The opt-in `scripts.eval_listening` harness runs blinded, swapped A/B
 judgments with separate tuning/held-out sets; see the validation guide for
 request budgets and credential loading. Live Gemini checks require a key and
 incur API usage; skipped runs do not measure listening accuracy.
