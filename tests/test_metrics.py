@@ -95,3 +95,21 @@ def test_stereo_and_antiphase():
     assert antiphase["spectrum"]["centroid_hz"] == pytest.approx(1000, abs=2)
     assert measure(clip(tone))["stereo"] is None
     json.dumps(antiphase, allow_nan=False)
+
+
+def test_gated_level_ignores_silence_padding():
+    tone = sine()
+    padded = measure(clip(np.concatenate((tone, np.zeros(96000)))))["level"]
+    plain = measure(clip(tone))["level"]
+    assert padded["gated_rms_dbfs"] == pytest.approx(plain["gated_rms_dbfs"], abs=1e-6)
+    assert padded["gated_rms_dbfs"] == pytest.approx(-9.0309, abs=0.01)
+    assert padded["gated_crest_factor_db"] == pytest.approx(3.0103, abs=0.01)
+    assert padded["gated_duration_seconds"] == pytest.approx(1)
+    assert padded["rms_dbfs"] < plain["rms_dbfs"] - 4
+
+
+def test_gated_level_undefined_for_silence():
+    result = measure(clip(np.zeros(48000)))["level"]
+    assert result["gated_rms_dbfs"] is None
+    assert result["gated_crest_factor_db"] is None
+    assert result["gated_duration_seconds"] == 0

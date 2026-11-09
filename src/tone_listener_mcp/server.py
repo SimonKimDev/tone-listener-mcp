@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 
@@ -73,12 +73,18 @@ def compare_audio(
     start_b: float | None = None,
     end_b: float | None = None,
     focus: str | None = None,
+    matching: Literal["active", "whole"] = "active",
 ) -> dict[str, Any]:
-    """Compare B to reference A with RMS matching and optional Gemini A/B listening."""
+    """Compare B to reference A with RMS matching and optional Gemini A/B listening.
+
+    matching="active" (default) matches gated, non-silent regions so silence padding does
+    not change the applied gain; "whole" matches whole-clip RMS including silence and tails.
+    """
     return compare(
         load_audio(path_a, start_a, end_a),
         load_audio(path_b, start_b, end_b),
         focus,
+        matching,
     )
 
 
