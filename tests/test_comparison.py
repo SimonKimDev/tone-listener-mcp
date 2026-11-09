@@ -56,6 +56,8 @@ def test_relative_bands_are_not_compared_across_nyquist_frequencies():
     deltas = result["deltas_b_minus_a"]["relative_band_db"]
     assert deltas["2000_5000"] is None
     assert all(value is None for value in deltas.values())
+    assert set(result["deltas_b_minus_a"]["band_evidence"].values()) == {"unavailable"}
+    assert not any("negligible" in caution for caution in result["cautions"])
     assert result["eq_direction_hints"] == []
     assert any("Nyquist" in caution for caution in result["cautions"])
     a_bands = result["metrics_a"]["spectrum"]["bands"]
@@ -372,3 +374,37 @@ def test_upload_matching_is_invariant_to_silence_alignment(monkeypatch, name, of
     powers = [gated_power(AudioClip(data[None, :], 16000, "upload"))[0] for data in uploaded]
     assert 10 * np.log10(powers[1] / powers[0]) == pytest.approx(0, abs=0.01)
     assert np.max(np.abs(uploaded[1])) == pytest.approx(np.max(np.abs(uploaded[0])), rel=1e-3)
+
+
+@pytest.mark.parametrize("gain", [0.1, 0.5, 2.0])
+def test_pure_gain_change_produces_no_eq_hints(gain):
+    t = np.arange(48000) / 48000
+    signal = 0.4 * np.sin(2 * np.pi * 1000 * t)
+    result = compare(clip(signal), clip(signal * gain))
+    assert result["eq_direction_hints"] == []
+    evidence = result["deltas_b_minus_a"]["band_evidence"]
+    assert evidence["800_2000"] == "sufficient"
+    assert evidence["above_8000"] == "insufficient_energy"
+    assert any("negligible energy" in caution for caution in result["cautions"])
+
+
+def test_negligible_band_deltas_are_reported_without_hints():
+    t = np.arange(48000) / 48000
+    signal = 0.4 * np.sin(2 * np.pi * 1000 * t)
+    rng = np.random.default_rng(0)
+    floor_a = rng.standard_normal(48000) * 1e-7
+    floor_b = rng.standard_normal(48000) * 1e-6
+    result = compare(clip(signal + floor_a), clip(signal + floor_b))
+    deltas = result["deltas_b_minus_a"]
+    assert deltas["relative_band_db"]["above_8000"] > 10
+    assert deltas["band_evidence"]["above_8000"] == "insufficient_energy"
+    assert result["eq_direction_hints"] == []
+
+
+def test_band_with_energy_in_one_clip_still_gets_hint():
+    t = np.arange(48000) / 48000
+    low = 0.3 * np.sin(2 * np.pi * 400 * t)
+    high = 0.1 * np.sin(2 * np.pi * 3000 * t)
+    result = compare(clip(low), clip(low + high))
+    assert result["deltas_b_minus_a"]["band_evidence"]["2000_5000"] == "sufficient"
+    assert any("2-5 kHz" in hint for hint in result["eq_direction_hints"])
