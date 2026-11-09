@@ -55,6 +55,8 @@ def test_stdio_tools(tmp_path):
             analysis = await session.call_tool("analyze_audio", {"path": str(path)})
             assert not analysis.is_error
             assert analysis.structured_content["listening_unavailable"]
+            assert analysis.structured_content["failure"]["category"] == "not_configured"
+            assert analysis.structured_content["diagnostics"]["cache"] == "not_used"
             comparison = await session.call_tool(
                 "compare_audio", {"path_a": str(path), "path_b": str(path)}
             )

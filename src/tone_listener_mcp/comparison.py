@@ -8,7 +8,7 @@ from typing import Literal
 import numpy as np
 
 from tone_listener_mcp.audio_io import AudioClip
-from tone_listener_mcp.listener import listen_comparison, listen_youtube_comparison
+from tone_listener_mcp.listener import Progress, listen_comparison, listen_youtube_comparison
 from tone_listener_mcp.metrics import (
     BANDS,
     GATE_ABSOLUTE_DBFS,
@@ -125,6 +125,7 @@ def compare(
     b: AudioClip,
     focus: str | None = None,
     matching: MatchingStrategy = "active",
+    progress: Progress | None = None,
 ) -> dict:
     matched_b, match_info = loudness_match(a, b, matching)
     match_info["activity"] = activity(a, b)
@@ -236,7 +237,7 @@ def compare(
         "rms_matching": True,
         "spectral_deltas": True,
     }
-    return {**result, **listen_comparison(a, matched_b, focus, matching)}
+    return {**result, **listen_comparison(a, matched_b, focus, matching, progress)}
 
 
 @dataclass(frozen=True)
@@ -261,6 +262,7 @@ def compare_reference(
     candidate: AudioClip,
     focus: str | None = None,
     matching: MatchingStrategy = "active",
+    progress: Progress | None = None,
 ) -> dict:
     """Compare candidate B with a local or YouTube reference A.
 
@@ -268,9 +270,9 @@ def compare_reference(
     and spectral deltas need both waveforms locally; semantic listening needs a Gemini key.
     """
     if isinstance(reference, AudioClip):
-        return compare(reference, candidate, focus, matching)
+        return compare(reference, candidate, focus, matching, progress)
     listened = listen_youtube_comparison(
-        reference.url, reference.start, reference.end, candidate, focus
+        reference.url, reference.start, reference.end, candidate, focus, progress
     )
     return {
         "available_analyses": {

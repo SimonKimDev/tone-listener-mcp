@@ -1,3 +1,4 @@
+import itertools
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -60,7 +61,7 @@ def test_success_and_cleanup(client, audio):
     result = listen(audio, "How bright is it?")
     assert result["listening"]["gain_level"] == "clean"
     assert result["listening_unavailable"] is None
-    client.files.delete.assert_called_once_with(name="files/test")
+    assert [c.kwargs["name"] for c in client.files.delete.call_args_list] == ["files/test"]
     path = client.files.upload.call_args.kwargs["file"]
     assert not path.exists()
     assert "How bright" in str(client.models.generate_content.call_args)
@@ -182,17 +183,23 @@ def test_uncertain_gain_and_system_instruction(client, audio, listening_payload)
 
 def test_processing_timeout_cleans_up(client, audio, monkeypatch):
     client.files.upload.return_value.state = types.FileState.PROCESSING
-    monkeypatch.setattr("tone_listener_mcp.listener.time.monotonic", MagicMock(side_effect=[0, 31]))
+    client.files.get.return_value = client.files.upload.return_value
+    clock = itertools.count(0, 5)
+    monkeypatch.setattr("tone_listener_mcp.listener.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("tone_listener_mcp.listener.time.sleep", lambda seconds: None)
     result = listen(audio)
     assert "TimeoutError" in result["listening_unavailable"]
-    client.files.delete.assert_called_once_with(name="files/test")
+    assert result["listening_failure_stage"] == "upload_processing"
+    assert result["failure"]["category"] == "deadline"
+    assert result["failure"]["retryable"] is True
+    assert [c.kwargs["name"] for c in client.files.delete.call_args_list] == ["files/test"]
     client.models.generate_content.assert_not_called()
 
 
 def test_failed_upload_state(client, audio):
     client.files.upload.return_value.state = types.FileState.FAILED
     assert listen(audio)["listening_unavailable"]
-    client.files.delete.assert_called_once_with(name="files/test")
+    assert [c.kwargs["name"] for c in client.files.delete.call_args_list] == ["files/test"]
     client.models.generate_content.assert_not_called()
 
 
@@ -335,7 +342,7 @@ def test_youtube_reference_with_local_candidate(monkeypatch):
     assert result["upload_loudness_match"] is None
     assert created[0]["http_options"].api_version == "v1beta"
     client.files.upload.assert_called_once()
-    client.files.delete.assert_called_once_with(name="files/B")
+    assert [c.kwargs["name"] for c in client.files.delete.call_args_list] == ["files/B"]
     call = client.models.generate_content.call_args.kwargs
     contents = call["contents"]
     assert "candidate B" in contents[0] and "NOT loudness-matched" in contents[0]
