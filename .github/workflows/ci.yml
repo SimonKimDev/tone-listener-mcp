@@ -13,32 +13,63 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  UV_VERSION: "0.13.7"
+
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12"]
+        include:
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install
-        run: python -m pip install -e '.[dev]'
+      - name: Install locked development environment
+        run: |
+          python -m pip install "uv==${{ env.UV_VERSION }}"
+          uv lock --check
+          uv sync --locked --extra dev --python "${{ matrix.python-version }}"
       - name: Lint
-        run: python -m ruff check .
+        run: uv run --no-sync ruff check .
       - name: Test DSP, provider mocks and real MCP stdio
-        run: python -m pytest -q
+        run: uv run --no-sync pytest -q
+        env:
+          GEMINI_API_KEY: ""
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install "uv==${{ env.UV_VERSION }}"
+          uv build --out-dir dist
+      - name: Install wheel into a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+      - name: Smoke-test installed executable over MCP stdio
+        run: /tmp/smoke/bin/python scripts/smoke_installed.py /tmp/smoke/bin/tone-listener-mcp
         env:
           GEMINI_API_KEY: ""
 
   # Required status check for main. always() ensures this job reports a
   # failure (not a skip, which would count as passing) when a leg fails or is cancelled.
   ci-passed:
-    needs: [test]
+    needs: [test, package]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

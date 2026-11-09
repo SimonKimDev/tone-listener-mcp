@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Literal
 
 import anyio.from_thread
 from mcp.server.mcpserver import Context, MCPServer
 
 from tone_listener_mcp import __version__
-from tone_listener_mcp.audio_io import load_audio
+from tone_listener_mcp.audio_io import load_audio, max_analysis_seconds
 from tone_listener_mcp.comparison import YouTubeReference, compare, compare_reference
-from tone_listener_mcp.listener import Progress, listen, listen_youtube
+from tone_listener_mcp.listener import (
+    DEFAULT_MODEL,
+    Progress,
+    listen,
+    listen_youtube,
+    request_settings,
+)
 from tone_listener_mcp.metrics import measure
 from tone_listener_mcp.schemas import (
     AnalyzeAudioResponse,
@@ -51,12 +58,35 @@ def _progress_reporter(ctx: Context | None) -> Progress | None:
 
 @mcp.tool(structured_output=True)
 def server_info() -> ServerInfo:
-    """Return basic information about this server."""
+    """Report version, configured model and whether listening is available. Never calls Gemini."""
+    errors = []
+    try:
+        max_seconds = max_analysis_seconds()
+    except ValueError as exc:
+        errors.append(str(exc))
+        max_seconds = None
+    try:
+        settings = request_settings()
+    except ValueError as exc:
+        errors.append(str(exc))
+        settings = None
+    if not os.environ.get("GEMINI_API_KEY"):
+        unavailable = "GEMINI_API_KEY is not set; local metrics only"
+    elif errors:
+        unavailable = "Invalid configuration; see configuration_errors"
+    else:
+        unavailable = None
     return ServerInfo.model_validate({
         "name": "tone-listener-mcp",
         "version": __version__,
         "primary_tool": "analyze_youtube",
         "youtube_local_extraction": False,
+        "model": os.environ.get("TONE_LISTENER_MODEL", DEFAULT_MODEL),
+        "listening_available": unavailable is None,
+        "listening_unavailable": unavailable,
+        "max_seconds": max_seconds,
+        "request_settings": settings,
+        "configuration_errors": errors,
     })
 
 
