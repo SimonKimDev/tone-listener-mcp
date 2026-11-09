@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import hmac
 import ipaddress
+import json
 import math
 import os
 import secrets
+import shutil
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import quote, urlsplit
+from uuid import UUID, uuid4
 
 import soundfile as sf
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -31,6 +34,7 @@ from tone_listener_mcp.listener import (
     listen_youtube_tone_profile,
 )
 from tone_listener_mcp.metrics import measure
+from tone_listener_mcp.workbench import refinement as refine
 from tone_listener_mcp.workbench.adapters.soundshed import (
     AdapterError,
     SoundshedAdapter,
@@ -44,6 +48,7 @@ from tone_listener_mcp.workbench.analysis_cache import (
 )
 from tone_listener_mcp.workbench.jobs import JobFailure, JobManager, JobQueueFull
 from tone_listener_mcp.workbench.models import (
+    DEFAULT_DI_SAMPLES,
     DI_SAMPLES,
     AdapterCatalog,
     AnalysisReuse,
@@ -157,6 +162,40 @@ class ProfileSelectionRequest(APIModel):
     analysis_index: int = Field(ge=0, le=2)
 
 
+class RefinementPreflightRequest(APIModel):
+    project_revision: int = Field(ge=1)
+    chain_revision: int = Field(ge=1)
+    model: Literal["gemini-3.6-flash", "gemini-4-argon"] = "gemini-3.6-flash"
+    samples: list[DiSample] = Field(default_factory=lambda: list(DEFAULT_DI_SAMPLES), min_length=1, max_length=len(DI_SAMPLES))
+    # "local": same gear/topology, bounded input-trim/EQ steps around the current (e.g. adopted) chain.
+    search: Literal["explore", "local"] = "explore"
+    # Uploaded-audio projects only: a fresh re-upload of the SAME analyzed file (verified by content SHA-256).
+    upload_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def unique_samples(self) -> RefinementPreflightRequest:
+        if len(set(self.samples)) != len(self.samples):
+            raise ValueError("Each DI sample may be judged once per run.")
+        return self
+
+
+class RefinementRequest(RefinementPreflightRequest):
+    plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    max_new_requests: int = Field(ge=1, le=len(DI_SAMPLES))
+    external_consent: bool
+
+    @model_validator(mode="after")
+    def require_consent(self) -> RefinementRequest:
+        if not self.external_consent:
+            raise ValueError("Explicit consent is required before sending renders to Gemini.")
+        return self
+
+
+class AdoptRequest(APIModel):
+    base_revision: int = Field(ge=1)
+    variant_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+
+
 class ExportRequest(APIModel):
     preview_id: str
 
@@ -202,6 +241,7 @@ def create_app(
     allowed_hosts: set[str] | None = None,
     job_manager: JobManager | None = None,
     allow_test_client: bool = False,
+    refinement_judge=None,
 ) -> FastAPI:
     local_storage = storage or LocalStorage()
     soundshed = adapter or SoundshedAdapter()
@@ -210,6 +250,12 @@ def create_app(
     native_renderer = renderer or NativeRenderer(soundshed)
     previews = PreviewCache(local_storage.cache)
     jobs = job_manager or JobManager()
+    judge = refinement_judge or refine.relative_judge.judge_relative
+    refinements = _private_refinement_root(local_storage)
+    # project_id -> exact reservation token; upload_id -> token of the refinement that leases it.
+    active_refinements: dict[str, object] = {}
+    upload_leases: dict[str, object] = {}
+    refinement_lock = threading.Lock()
     authority_allowlist = {
         authority.lower()
         for authority in (allowed_hosts or {"127.0.0.1:8765", "localhost:8765"})
@@ -816,6 +862,353 @@ def create_app(
         except JobQueueFull as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
 
+    def _release_refinement_upload(upload_id: str | None, lease: object | None = None) -> None:
+        """Delete a reselected upload unless another refinement's reservation holds it."""
+        if upload_id:
+            with refinement_lock:
+                owner = upload_leases.get(upload_id)
+                if owner is not None and owner is not lease:
+                    return
+                upload_leases.pop(upload_id, None)
+            try:
+                local_storage.release_upload(upload_id)
+            except ValueError:
+                pass
+            upload_digests.pop(upload_id, None)
+
+    def _refinement_upload(project: ToneProject, body: RefinementPreflightRequest, interval: Interval):
+        """Verify a re-upload is byte-identical to the analyzed file; release it on any refusal."""
+        if project.source.content_sha256 is None:
+            _release_refinement_upload(body.upload_id)
+            raise HTTPException(status_code=409, detail=(
+                "This project was analyzed before source fingerprints were recorded, so a re-upload cannot be "
+                "verified as the same file. Analyze the file again (matching cached intervals are reused without "
+                "new requests), then refine the new project."))
+        if body.upload_id is None:
+            raise HTTPException(status_code=428, detail=(
+                "Uploaded audio is not retained after analysis. Reselect the same file to compare against it; "
+                "it is verified by content hash and deleted when the refinement ends."))
+        try:
+            uploaded = local_storage.get_upload(body.upload_id)
+        except ValueError:
+            uploaded = None
+        if uploaded is None:
+            raise HTTPException(status_code=410, detail="Reselected audio expired; select the file again.")
+        digest = upload_digests.get(uploaded.id)
+        if digest is None:
+            digest = upload_digests[uploaded.id] = file_sha256(uploaded.path)
+        if digest != project.source.content_sha256:
+            _release_refinement_upload(uploaded.id)
+            raise HTTPException(status_code=409, detail=(
+                "The selected file is not the analyzed source (content differs); it was discarded. "
+                "Select the exact same file."))
+        if interval.end_seconds > uploaded.duration_seconds:
+            _release_refinement_upload(uploaded.id)
+            raise HTTPException(status_code=409, detail="The selected interval exceeds the reselected audio.")
+        return uploaded
+
+    def _refinement_plan(project: ToneProject, body: RefinementPreflightRequest):
+        """Return the plan plus the verified reselected upload; any refusal discards that upload."""
+        try:
+            plan = _refinement_plan_inner(project, body)
+        except HTTPException:
+            _release_refinement_upload(body.upload_id)
+            raise
+        uploaded = None
+        if project.source.kind == "audio_file":
+            uploaded = local_storage.get_upload(body.upload_id or "")
+        elif body.upload_id is not None:
+            _release_refinement_upload(body.upload_id)
+        return plan, uploaded
+
+    def _refinement_plan_inner(project: ToneProject, body: RefinementPreflightRequest) -> refine.RefinementPlan:
+        if project.revision != body.project_revision or project.chain.revision != body.chain_revision:
+            raise HTTPException(status_code=409, detail="Project changed; reload before refining.")
+        if project.synthetic_fixture:
+            raise HTTPException(status_code=409, detail="Synthetic fixture projects have no real reference to compare.")
+        if project.source.kind == "youtube" and not project.source.url:
+            raise HTTPException(status_code=409, detail="The YouTube reference URL is missing.")
+        segment = project.analysis[project.selected_analysis_index]
+        if segment.profile is None:
+            raise HTTPException(status_code=409, detail="The selected interval has no successful tone profile.")
+        if segment.profile.guitar_dominance != "clear":
+            raise HTTPException(status_code=409, detail=(
+                "The selected interval's guitar is not clearly separable; comparisons would be unusable."))
+        errors = soundshed.validate_chain(project.chain)
+        if errors:
+            raise HTTPException(status_code=409, detail="Resolve the chain before refining: " + "; ".join(errors))
+        variants = refine.build_variants(soundshed, project.chain, segment.profile, body.search)
+        if not any(item.role == "control" for item in variants) or not any(item.role == "variant" for item in variants):
+            raise HTTPException(status_code=409, detail=(
+                "No distinct local variant and wrong-tone control could be built from installed resources."))
+        bounds = {"start_seconds": segment.interval.start_seconds, "end_seconds": segment.interval.end_seconds,
+                  "analysis_index": project.selected_analysis_index}
+        if project.source.kind == "audio_file":
+            uploaded = _refinement_upload(project, body, segment.interval)
+            reference = {"kind": "audio_file", "content_sha256": project.source.content_sha256,
+                         "upload_id": uploaded.id, **bounds}
+            uploads = len(variants) + 1
+            sent = "the reselected reference audio interval"
+            uploaded_note = True
+        else:
+            uploaded_note = False
+            reference = {"kind": "youtube", "url": project.source.url, **bounds}
+            uploads = len(variants)
+            sent = "the public YouTube interval"
+        base_sha = soundshed.chain_sha256(project.chain)
+        identity = {
+            "project_id": project.id, "project_revision": project.revision, "chain_sha256": base_sha,
+            "model": body.model, "samples": body.samples, "reference": reference, "search": body.search,
+            "variants": [[item.id, item.chain_sha256] for item in variants],
+            "engine_version": soundshed.engine_version, "judge": refine.judge_identity(),
+        }
+        return refine.RefinementPlan(
+            project_id=project.id, project_revision=project.revision, base_chain_sha256=base_sha,
+            model=body.model, samples=body.samples, reference=reference, variants=variants, search=body.search,
+            max_new_requests=len(body.samples), uploads_per_request=uploads,
+            plan_sha256=refine.plan_sha256(identity),
+            disclosure=(f"{refine.SEARCH_DESCRIPTIONS[body.search]} "
+                        f"Sends {len(variants)} level-matched renders per DI sample plus {sent} "
+                        f"({uploads} uploads per request) to {body.model}: at most {len(body.samples)} new "
+                        "generation request(s), never retried or reused. Rendering, adopting, editing and export "
+                        "make no requests."
+                        + (" The reselected file is deleted when the refinement ends." if uploaded_note else "")),
+        )
+
+    @app.post("/api/projects/{project_id}/refinement/preflight", response_model=refine.RefinementPlan)
+    def refinement_preflight(project_id: str, body: RefinementPreflightRequest) -> refine.RefinementPlan:
+        try:
+            project = _load_project(local_storage, project_id)
+        except HTTPException:
+            _release_refinement_upload(body.upload_id)
+            raise
+        # A verified reselected upload stays registered (TTL-bounded) for the confirmed run.
+        return _refinement_plan(project, body)[0]
+
+    @app.post("/api/projects/{project_id}/jobs/refinement", response_model=JobStatus, status_code=202)
+    def start_refinement(project_id: str, body: RefinementRequest) -> JobStatus:
+        try:
+            return _start_refinement(project_id, body)
+        except HTTPException:
+            _release_refinement_upload(body.upload_id)
+            raise
+
+    def _start_refinement(project_id: str, body: RefinementRequest) -> JobStatus:
+        if not native_renderer.verified:
+            raise HTTPException(status_code=503,
+                                detail=native_renderer.initialization_error or "Renderer self-test has not passed.")
+        if not os.environ.get("GEMINI_API_KEY") and refinement_judge is None:
+            raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured locally.")
+        project = _load_project(local_storage, project_id)
+        plan, uploaded = _refinement_plan(project, body)
+        if plan.plan_sha256 != body.plan_sha256 or plan.max_new_requests > body.max_new_requests:
+            raise HTTPException(status_code=409, detail=(
+                "The refinement plan changed since you confirmed; review the new plan and confirm again."))
+        if project.source.kind == "audio_file" and uploaded is None:
+            raise HTTPException(status_code=410, detail="Reselected audio expired; select the file again.")
+        reservation = object()
+        with refinement_lock:
+            if project_id in active_refinements:
+                raise HTTPException(status_code=409, detail="A refinement for this project is already running.")
+            if uploaded is not None and uploaded.id in upload_leases:
+                raise HTTPException(status_code=409, detail="That reselected file is already in use.")
+            active_refinements[project_id] = reservation
+            if uploaded is not None:
+                upload_leases[uploaded.id] = reservation
+
+        def release_reservation() -> None:
+            """Idempotent; only ever releases THIS reservation, never a newer job's."""
+            if uploaded is not None:
+                _release_refinement_upload(uploaded.id, reservation)
+            with refinement_lock:
+                if active_refinements.get(project_id) is reservation:
+                    del active_refinements[project_id]
+
+        record = refine.RefinementRecord(
+            id=str(uuid4()), status="running", project_id=project.id, project_revision=project.revision,
+            chain_revision=project.chain.revision, base_chain_sha256=plan.base_chain_sha256,
+            plan_sha256=plan.plan_sha256, model=plan.model, reference=plan.reference, samples=plan.samples,
+            search=plan.search,
+            confirmed_max_new_requests=body.max_new_requests, created_at=_now(),
+            variants=[refine.VariantSummary(id=item.id, role=item.role, label=item.label,
+                                            description=item.description, chain_sha256=item.chain_sha256)
+                      for item in plan.variants],
+        )
+        directory = refinements / record.id
+        hot = refine.control_is_hotter(project.analysis[project.selected_analysis_index].profile)
+
+        def persist() -> None:
+            _write_private_json(directory / "record.json", record.model_dump(mode="json"))
+
+        def work(progress, cancelled: threading.Event) -> dict[str, object]:
+            try:
+                directory.mkdir(mode=0o700)
+                _write_private_json(directory / "chains.json",
+                                    {item.id: item.chain.model_dump(mode="json") for item in plan.variants})
+                persist()
+                clips: dict[str, dict[str, AudioClip]] = {sample: {} for sample in plan.samples}
+                total = len(plan.samples) * len(plan.variants)
+                for sample in plan.samples:
+                    for variant in plan.variants:
+                        if cancelled.is_set():
+                            raise JobFailure("Refinement cancelled before any request was sent.")
+                        progress(0.05 + 0.45 * sum(map(len, clips.values())) / total,
+                                 f"Rendering {variant.label} on {sample} locally.")
+                        candidate = project.model_copy(update={"chain": variant.chain})
+                        rendered = native_renderer.render(candidate, sample, directory, cancelled)
+                        wav = directory / f"{variant.id}-{sample}.wav"
+                        os.replace(directory / f"{rendered.snapshot.id}.wav", wav)
+                        clips[sample][variant.id] = AudioClip(
+                            samples=rendered.samples.T, sample_rate=rendered.snapshot.sample_rate,
+                            source=f"{variant.id}-{sample}")
+                        next(item for item in record.variants if item.id == variant.id).renders.append(
+                            refine.VariantRender(sample=sample, audio_sha256=rendered.snapshot.audio_sha256,
+                                                 duration_seconds=rendered.snapshot.duration_seconds,
+                                                 rms=rendered.snapshot.rms, peak=rendered.snapshot.peak))
+                persist()
+                if uploaded is not None:
+                    anchor = _load_uploaded_interval(uploaded.path, Interval(
+                        start_seconds=plan.reference["start_seconds"], end_seconds=plan.reference["end_seconds"]))
+                    reference_input = {"anchor_clip": anchor}
+                else:
+                    reference_input = {"youtube": (plan.reference["url"], plan.reference["start_seconds"],
+                                                   plan.reference["end_seconds"])}
+                paused = False
+                for index, sample in enumerate(plan.samples):
+                    if cancelled.is_set() or paused or record.new_generate_requests >= body.max_new_requests:
+                        record.judgments.append(refine.SampleJudgment(
+                            sample=sample, status="not_attempted",
+                            reason="Provider paused after HTTP 429." if paused else "Cancelled before this request."))
+                        continue
+                    progress(0.5 + 0.45 * index / len(plan.samples),
+                             f"Requesting one blinded {plan.model} comparison for {sample}.")
+                    result = judge(model=plan.model, candidates=clips[sample], seed=secrets.randbelow(2**31),
+                                   **reference_input)
+                    summary = refine.summarize_judgment(sample, result, hot)
+                    record.new_generate_requests += summary.generate_requests
+                    record.new_upload_requests += summary.upload_requests
+                    record.judgments.append(summary)
+                    paused = summary.http_status == 429
+                    persist()
+                record.suggestion = refine.suggest_from(record.judgments)
+                judged = sum(item.status == "judged" for item in record.judgments)
+                record.status = ("cancelled" if cancelled.is_set() else
+                                 "completed" if judged == len(plan.samples) else "partial")
+                record.completed_at = _now()
+                persist()
+                _prune_refinements(refinements, protect={record.id})
+                progress(1.0, "Refinement judgments saved.")
+                return {"_job_status": "completed" if record.status == "completed" else "partial",
+                        "refinement": record.model_dump(mode="json")}
+            except (AdapterError, RenderError, StorageError, OSError, APIError) as exc:
+                record.status = "failed"
+                record.completed_at = _now()
+                if directory.is_dir():
+                    persist()
+                raise JobFailure(str(exc)) from exc
+            except Exception:
+                record.status = "cancelled" if cancelled.is_set() else "failed"
+                record.completed_at = _now()
+                if directory.is_dir():
+                    persist()
+                raise
+            finally:
+                release_reservation()
+
+        try:
+            return jobs.submit("refinement", work, on_abandon=release_reservation)
+        except JobQueueFull as exc:
+            release_reservation()
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/refinements", response_model=list[refine.RefinementRecord])
+    def list_refinements(project_id: str) -> list[refine.RefinementRecord]:
+        _load_project(local_storage, project_id)
+        records = []
+        for path in refinements.glob("*/record.json"):
+            try:
+                item = refine.RefinementRecord.model_validate_json(path.read_text())
+            except (OSError, ValueError):
+                continue
+            if item.project_id == project_id:
+                records.append(item)
+        return sorted(records, key=lambda item: item.created_at, reverse=True)[:5]
+
+    def _refinement_record(project_id: str, refinement_id: str) -> refine.RefinementRecord:
+        try:
+            identifier = str(UUID(refinement_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Refinement was not found.") from exc
+        path = refinements / identifier / "record.json"
+        try:
+            item = refine.RefinementRecord.model_validate_json(path.read_text())
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="Refinement was not found.") from exc
+        if item.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Refinement was not found.")
+        return item
+
+    @app.get("/api/projects/{project_id}/refinements/{refinement_id}/audio/{variant_id}/{sample_name}")
+    def refinement_audio(project_id: str, refinement_id: str, variant_id: str, sample_name: str):
+        item = _refinement_record(project_id, refinement_id)
+        variant = next((entry for entry in item.variants if entry.id == variant_id), None)
+        render = variant and next((entry for entry in variant.renders if entry.sample == sample_name), None)
+        if render is None:
+            raise HTTPException(status_code=404, detail="Variant render was not found.")
+        directory = refinements / item.id
+        path = directory / f"{variant.id}-{render.sample}.wav"
+        if not path.is_file() or path.is_symlink():
+            raise HTTPException(status_code=404, detail="Variant render was not found.")
+        # Audition is level-matched like the judge's input (full band, stereo): every variant of this sample
+        # gets the same RMS with one shared headroom attenuation, so louder variants do not sound "better".
+        siblings = {}
+        for entry in item.variants:
+            sibling = directory / f"{entry.id}-{render.sample}.wav"
+            if any(r.sample == render.sample for r in entry.renders) and sibling.is_file() \
+                    and not sibling.is_symlink():
+                siblings[entry.id] = sibling
+        try:
+            audio = _audition_level_matched(siblings, variant.id)
+        except (OSError, ValueError, sf.LibsndfileError) as exc:
+            raise HTTPException(status_code=404, detail="Variant render could not be read.") from exc
+        return Response(audio, media_type="audio/wav", headers={
+            "Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="refinement-variant.wav"',
+            "X-Audition-Level": "rms-matched"})
+
+    @app.post("/api/projects/{project_id}/refinements/{refinement_id}/adopt")
+    def adopt_variant(project_id: str, refinement_id: str, body: AdoptRequest) -> ToneProject:
+        project = _load_project(local_storage, project_id)
+        item = _refinement_record(project_id, refinement_id)
+        if body.base_revision != project.revision or project.revision != item.project_revision \
+                or soundshed.chain_sha256(project.chain) != item.base_chain_sha256:
+            raise HTTPException(status_code=409, detail=(
+                "The chain changed after this refinement; its variants no longer apply. Refine again."))
+        try:
+            chains = json.loads((refinements / item.id / "chains.json").read_text())
+            draft = ChainDraft.model_validate(chains[body.variant_id])
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail="Variant was not found.") from exc
+        variant = next((entry for entry in item.variants if entry.id == body.variant_id), None)
+        if variant is None or variant.role == "control" or soundshed.chain_sha256(draft) != variant.chain_sha256:
+            raise HTTPException(status_code=409, detail="Only a recorded, non-control variant can be adopted.")
+        chain = ChainDraft(revision=project.chain.revision + 1, nodes=draft.nodes)
+        errors = soundshed.validate_chain(chain, for_render=False)
+        if errors:
+            raise HTTPException(status_code=422, detail="; ".join(errors))
+        updated = project.model_copy(update={
+            "revision": project.revision + 1, "chain": chain, "updated_at": _now(),
+            "target": TargetBinding(
+                adapter_id=project.target.adapter_id, engine_version=project.target.engine_version,
+                resources={node.id: node.asset for node in chain.nodes if node.asset is not None}),
+        })
+        try:
+            local_storage.save_project(updated, expected_revision=body.base_revision)
+        except ProjectConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except StorageError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return updated
+
     @app.get("/api/jobs/{job_id}", response_model=JobStatus)
     def get_job(job_id: str) -> JobStatus:
         job = jobs.get(job_id)
@@ -1022,6 +1415,65 @@ def _tone_intent(segments: list[AnalysisSegment], selected: int = 0) -> ToneInte
         uncertainties=uncertainties[:32],
         gear_notes=["Audible observations do not identify the original rig or exact settings."],
     )
+
+
+def _private_refinement_root(storage: LocalStorage) -> Path:
+    root = storage.root / "refinements"
+    root.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(root, 0o700)
+    return root
+
+
+def _write_private_json(path: Path, payload: object) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+AUDITION_RMS_DBFS = -20.0
+AUDITION_PEAK = 10 ** (-1 / 20)
+
+
+def _audition_level_matched(paths: dict[str, Path], wanted: str) -> bytes:
+    """Equal-RMS audition of ``wanted`` among its siblings with shared peak headroom (-1 dBFS)."""
+    import io
+
+    import numpy as np
+
+    loaded = {key: sf.read(str(path), dtype="float32", always_2d=True) for key, path in paths.items()}
+    gains, peaks = {}, []
+    for key, (samples, _) in loaded.items():
+        rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64))))
+        if not np.isfinite(rms) or rms <= 1e-6:
+            raise ValueError("silent render")
+        gains[key] = 10 ** (AUDITION_RMS_DBFS / 20) / rms
+        peaks.append(float(np.max(np.abs(samples))) * gains[key])
+    shared = min(1.0, AUDITION_PEAK / max(peaks))
+    samples, rate = loaded[wanted]
+    buffer = io.BytesIO()
+    sf.write(buffer, samples * gains[wanted] * shared, rate, format="WAV", subtype="FLOAT")
+    return buffer.getvalue()
+
+
+TERMINAL_REFINEMENTS = frozenset({"completed", "partial", "cancelled", "failed"})
+
+
+def _prune_refinements(root: Path, keep: int = 20, protect: frozenset[str] | set[str] = frozenset()) -> None:
+    """Keep the newest ``keep`` terminal records; never touch running, protected or unrecognized directories."""
+    terminal = []
+    for path in root.iterdir():
+        if not path.is_dir() or path.is_symlink() or path.name in protect:
+            continue
+        try:
+            status = json.loads((path / "record.json").read_text()).get("status")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if status in TERMINAL_REFINEMENTS:
+            terminal.append(path)
+    terminal.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    for directory in terminal[keep:]:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def _now() -> str:

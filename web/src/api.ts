@@ -37,6 +37,9 @@ export type UploadResult = components["schemas"]["UploadResponse"];
 
 export type AnalysisPreflight = components["schemas"]["AnalysisPreflight"];
 
+export type RefinementPlan = components["schemas"]["RefinementPlan"];
+export type RefinementRecord = components["schemas"]["RefinementRecord"];
+export type JudgeModel = "gemini-3.6-flash" | "gemini-4-argon";
 export type DiSample = "riff-1" | "riff-2" | "lead-1" | "lead-2";
 export const DI_SAMPLES: readonly DiSample[] = ["riff-1", "riff-2", "lead-1", "lead-2"];
 export const DI_SAMPLE_LABELS: Record<DiSample, string> = {
@@ -44,6 +47,14 @@ export const DI_SAMPLE_LABELS: Record<DiSample, string> = {
   "riff-2": "Riff 2 · 12.3 sec · low-register funk chords · CC0 direct DI",
   "lead-1": "Lead 1 · 15.2 sec · upper-register lead · Guitar-TECHS, CC BY 4.0",
   "lead-2": "Lead 2 · 12.4 sec · single-note pedal riff · Guitar-TECHS, CC BY 4.0",
+};
+type RefinementScope = {
+  project_revision: number;
+  chain_revision: number;
+  model: JudgeModel;
+  samples: DiSample[];
+  search?: "explore" | "local";
+  upload_id?: string;
 };
 
 let requestToken = "";
@@ -168,6 +179,21 @@ export const api = {
   audio: (projectId: string, previewId: string) =>
     requestBlob(`/api/projects/${projectId}/previews/${previewId}/audio`),
   sample: (name: DiSample) => requestBlob(`/api/samples/${name}`),
+  refinementPlan: (projectId: string, body: RefinementScope) =>
+    request<RefinementPlan>(`/api/projects/${projectId}/refinement/preflight`, json(body)),
+  refine: (projectId: string, body: RefinementScope & {
+    plan_sha256: string;
+    max_new_requests: number;
+    external_consent: true;
+  }) => request<JobStatus>(`/api/projects/${projectId}/jobs/refinement`, json(body)),
+  refinements: (projectId: string) =>
+    request<RefinementRecord[]>(`/api/projects/${projectId}/refinements`),
+  refinementAudio: (projectId: string, refinementId: string, variantId: string, sample: DiSample) =>
+    requestBlob(`/api/projects/${projectId}/refinements/${refinementId}/audio/${variantId}/${sample}`),
+  adoptVariant: (projectId: string, refinementId: string, baseRevision: number, variantId: string) =>
+    request<ToneProject>(`/api/projects/${projectId}/refinements/${refinementId}/adopt`, json({
+      base_revision: baseRevision, variant_id: variantId,
+    })),
   exportPreset: (projectId: string, previewId: string) =>
     requestBlob(
       `/api/projects/${projectId}/export`,

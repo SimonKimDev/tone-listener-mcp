@@ -208,6 +208,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/refinement/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refinement Preflight */
+        post: operations["refinement_preflight_api_projects__project_id__refinement_preflight_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/jobs/refinement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Refinement */
+        post: operations["start_refinement_api_projects__project_id__jobs_refinement_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/refinements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Refinements */
+        get: operations["list_refinements_api_projects__project_id__refinements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/refinements/{refinement_id}/audio/{variant_id}/{sample_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Refinement Audio */
+        get: operations["refinement_audio_api_projects__project_id__refinements__refinement_id__audio__variant_id___sample_name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/refinements/{refinement_id}/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adopt Variant */
+        post: operations["adopt_variant_api_projects__project_id__refinements__refinement_id__adopt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -360,6 +445,13 @@ export interface components {
             blocks: components["schemas"]["BlockDefinition"][];
             /** Resources */
             resources: components["schemas"]["ResourceDefinition"][];
+        };
+        /** AdoptRequest */
+        AdoptRequest: {
+            /** Base Revision */
+            base_revision: number;
+            /** Variant Id */
+            variant_id: string;
         };
         /** AnalysisFailure */
         AnalysisFailure: {
@@ -805,6 +897,180 @@ export interface components {
             /** Source Name */
             source_name: string;
         };
+        /** RefinementPlan */
+        RefinementPlan: {
+            /** Project Id */
+            project_id: string;
+            /** Project Revision */
+            project_revision: number;
+            /** Base Chain Sha256 */
+            base_chain_sha256: string;
+            /** Model */
+            model: string;
+            /** Samples */
+            samples: ("riff-1" | "riff-2" | "lead-1" | "lead-2")[];
+            /** Reference */
+            reference: {
+                [key: string]: unknown;
+            };
+            /** Variants */
+            variants: components["schemas"]["RefinementVariant"][];
+            /**
+             * Search
+             * @default explore
+             * @enum {string}
+             */
+            search: "explore" | "local";
+            /** Max New Requests */
+            max_new_requests: number;
+            /** Uploads Per Request */
+            uploads_per_request: number;
+            /** Plan Sha256 */
+            plan_sha256: string;
+            /** Evidence */
+            evidence?: {
+                [key: string]: string;
+            };
+            /** Disclosure */
+            disclosure: string;
+        };
+        /** RefinementPreflightRequest */
+        RefinementPreflightRequest: {
+            /** Project Revision */
+            project_revision: number;
+            /** Chain Revision */
+            chain_revision: number;
+            /**
+             * Model
+             * @default gemini-3.6-flash
+             * @enum {string}
+             */
+            model: "gemini-3.6-flash" | "gemini-4-argon";
+            /** Samples */
+            samples?: ("riff-1" | "riff-2" | "lead-1" | "lead-2")[];
+            /**
+             * Search
+             * @default explore
+             * @enum {string}
+             */
+            search: "explore" | "local";
+            /** Upload Id */
+            upload_id?: string | null;
+        };
+        /** RefinementRecord */
+        RefinementRecord: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "partial" | "cancelled" | "failed";
+            /** Project Id */
+            project_id: string;
+            /** Project Revision */
+            project_revision: number;
+            /** Chain Revision */
+            chain_revision: number;
+            /** Base Chain Sha256 */
+            base_chain_sha256: string;
+            /** Plan Sha256 */
+            plan_sha256: string;
+            /** Model */
+            model: string;
+            /** Reference */
+            reference: {
+                [key: string]: unknown;
+            };
+            /** Samples */
+            samples: ("riff-1" | "riff-2" | "lead-1" | "lead-2")[];
+            /**
+             * Search
+             * @default explore
+             * @enum {string}
+             */
+            search: "explore" | "local";
+            /** Confirmed Max New Requests */
+            confirmed_max_new_requests: number;
+            /**
+             * New Generate Requests
+             * @default 0
+             */
+            new_generate_requests: number;
+            /**
+             * New Upload Requests
+             * @default 0
+             */
+            new_upload_requests: number;
+            /** Created At */
+            created_at: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Variants */
+            variants: components["schemas"]["VariantSummary"][];
+            /** Judgments */
+            judgments?: components["schemas"]["SampleJudgment"][];
+            suggestion?: components["schemas"]["RefinementSuggestion"] | null;
+            /** Evidence */
+            evidence?: {
+                [key: string]: string;
+            };
+            /** Limitations */
+            limitations?: string[];
+        };
+        /** RefinementRequest */
+        RefinementRequest: {
+            /** Project Revision */
+            project_revision: number;
+            /** Chain Revision */
+            chain_revision: number;
+            /**
+             * Model
+             * @default gemini-3.6-flash
+             * @enum {string}
+             */
+            model: "gemini-3.6-flash" | "gemini-4-argon";
+            /** Samples */
+            samples?: ("riff-1" | "riff-2" | "lead-1" | "lead-2")[];
+            /**
+             * Search
+             * @default explore
+             * @enum {string}
+             */
+            search: "explore" | "local";
+            /** Upload Id */
+            upload_id?: string | null;
+            /** Plan Sha256 */
+            plan_sha256: string;
+            /** Max New Requests */
+            max_new_requests: number;
+            /** External Consent */
+            external_consent: boolean;
+        };
+        /** RefinementSuggestion */
+        RefinementSuggestion: {
+            /** Variant Id */
+            variant_id: string | null;
+            /** Basis */
+            basis: string;
+        };
+        /** RefinementVariant */
+        RefinementVariant: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "current" | "variant" | "control";
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+            chain: components["schemas"]["ChainDraft"];
+            /** Chain Sha256 */
+            chain_sha256: string;
+        };
         /** ResourceDefinition */
         ResourceDefinition: {
             asset: components["schemas"]["AssetRef"];
@@ -812,6 +1078,47 @@ export interface components {
             provider: string;
             /** File Size Bytes */
             file_size_bytes: number;
+        };
+        /** SampleJudgment */
+        SampleJudgment: {
+            /**
+             * Sample
+             * @enum {string}
+             */
+            sample: "riff-1" | "riff-2" | "lead-1" | "lead-2";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "judged" | "invalid" | "failed" | "not_attempted";
+            /** Reason */
+            reason?: string | null;
+            /** Reference Guitar Audible */
+            reference_guitar_audible?: string | null;
+            /** Closest Is Close Match */
+            closest_is_close_match?: string | null;
+            /** Observations */
+            observations?: components["schemas"]["VariantObservation"][];
+            /** Control Passed */
+            control_passed?: boolean | null;
+            /** Control Detail */
+            control_detail?: string | null;
+            /** Finish Reason */
+            finish_reason?: string | null;
+            /** Http Status */
+            http_status?: number | null;
+            /**
+             * Generate Requests
+             * @default 0
+             */
+            generate_requests: number;
+            /**
+             * Upload Requests
+             * @default 0
+             */
+            upload_requests: number;
+            /** Notes */
+            notes?: string[];
         };
         /** SourceRef */
         SourceRef: {
@@ -986,6 +1293,61 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VariantObservation */
+        VariantObservation: {
+            /** Variant Id */
+            variant_id: string;
+            /** Gain */
+            gain: string;
+            /** Brightness */
+            brightness: string;
+            /** Bass */
+            bass: string;
+            /** Mids */
+            mids: string;
+            /** Attack */
+            attack: string;
+            /** Compression */
+            compression: string;
+            /** Ambience */
+            ambience: string;
+            /** Rank */
+            rank: number;
+        };
+        /** VariantRender */
+        VariantRender: {
+            /**
+             * Sample
+             * @enum {string}
+             */
+            sample: "riff-1" | "riff-2" | "lead-1" | "lead-2";
+            /** Audio Sha256 */
+            audio_sha256: string;
+            /** Duration Seconds */
+            duration_seconds: number;
+            /** Rms */
+            rms: number;
+            /** Peak */
+            peak: number;
+        };
+        /** VariantSummary */
+        VariantSummary: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "current" | "variant" | "control";
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+            /** Chain Sha256 */
+            chain_sha256: string;
+            /** Renders */
+            renders?: components["schemas"]["VariantRender"][];
         };
     };
     responses: never;
@@ -1329,6 +1691,177 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refinement_preflight_api_projects__project_id__refinement_preflight_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefinementPreflightRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefinementPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_refinement_api_projects__project_id__jobs_refinement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefinementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_refinements_api_projects__project_id__refinements_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefinementRecord"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refinement_audio_api_projects__project_id__refinements__refinement_id__audio__variant_id___sample_name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                refinement_id: string;
+                variant_id: string;
+                sample_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    adopt_variant_api_projects__project_id__refinements__refinement_id__adopt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                refinement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToneProject"];
                 };
             };
             /** @description Validation Error */

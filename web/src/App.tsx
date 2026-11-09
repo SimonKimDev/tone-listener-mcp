@@ -10,6 +10,7 @@ import {
 import { ChainEditor } from "./ChainEditor";
 import { createGeneration, guardedBy } from "./ownership";
 import { PreviewPlayer } from "./PreviewPlayer";
+import { RefinementPanel } from "./RefinementPanel";
 import { SourceInput } from "./SourceInput";
 
 type View = "workbench" | "new";
@@ -204,6 +205,14 @@ export function App() {
                 setPreview={guardedBy(displays.current, epoch, setPreview)}
                 dirty={chainDirty}
                 disabled={!health?.renderer_available}
+              />
+              <RefinementPanel
+                key={`refine:${project.id}`}
+                project={project}
+                dirty={chainDirty}
+                disabled={!health?.renderer_available}
+                onAdopted={handleSaved}
+                guard={owned}
               />
             </div>
             <aside className="analysis-sidebar">

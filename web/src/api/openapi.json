@@ -417,6 +417,269 @@
         }
       }
     },
+    "/api/projects/{project_id}/refinement/preflight": {
+      "post": {
+        "summary": "Refinement Preflight",
+        "operationId": "refinement_preflight_api_projects__project_id__refinement_preflight_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefinementPreflightRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefinementPlan"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/jobs/refinement": {
+      "post": {
+        "summary": "Start Refinement",
+        "operationId": "start_refinement_api_projects__project_id__jobs_refinement_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefinementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/refinements": {
+      "get": {
+        "summary": "List Refinements",
+        "operationId": "list_refinements_api_projects__project_id__refinements_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RefinementRecord"
+                  },
+                  "title": "Response List Refinements Api Projects  Project Id  Refinements Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/refinements/{refinement_id}/audio/{variant_id}/{sample_name}": {
+      "get": {
+        "summary": "Refinement Audio",
+        "operationId": "refinement_audio_api_projects__project_id__refinements__refinement_id__audio__variant_id___sample_name__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "refinement_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Refinement Id"
+            }
+          },
+          {
+            "name": "variant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Variant Id"
+            }
+          },
+          {
+            "name": "sample_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sample Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/refinements/{refinement_id}/adopt": {
+      "post": {
+        "summary": "Adopt Variant",
+        "operationId": "adopt_variant_api_projects__project_id__refinements__refinement_id__adopt_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "refinement_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Refinement Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToneProject"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/{job_id}": {
       "get": {
         "summary": "Get Job",
@@ -744,6 +1007,29 @@
           "resources"
         ],
         "title": "AdapterCatalog"
+      },
+      "AdoptRequest": {
+        "properties": {
+          "base_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Base Revision"
+          },
+          "variant_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Variant Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_revision",
+          "variant_id"
+        ],
+        "title": "AdoptRequest"
       },
       "AnalysisFailure": {
         "properties": {
@@ -2064,6 +2350,475 @@
         ],
         "title": "ProjectSummary"
       },
+      "RefinementPlan": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project_revision": {
+            "type": "integer",
+            "title": "Project Revision"
+          },
+          "base_chain_sha256": {
+            "type": "string",
+            "title": "Base Chain Sha256"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "samples": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "riff-1",
+                "riff-2",
+                "lead-1",
+                "lead-2"
+              ]
+            },
+            "type": "array",
+            "title": "Samples"
+          },
+          "reference": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Reference"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/RefinementVariant"
+            },
+            "type": "array",
+            "title": "Variants"
+          },
+          "search": {
+            "type": "string",
+            "enum": [
+              "explore",
+              "local"
+            ],
+            "title": "Search",
+            "default": "explore"
+          },
+          "max_new_requests": {
+            "type": "integer",
+            "title": "Max New Requests"
+          },
+          "uploads_per_request": {
+            "type": "integer",
+            "title": "Uploads Per Request"
+          },
+          "plan_sha256": {
+            "type": "string",
+            "title": "Plan Sha256"
+          },
+          "evidence": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Evidence"
+          },
+          "disclosure": {
+            "type": "string",
+            "title": "Disclosure"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_revision",
+          "base_chain_sha256",
+          "model",
+          "samples",
+          "reference",
+          "variants",
+          "max_new_requests",
+          "uploads_per_request",
+          "plan_sha256",
+          "disclosure"
+        ],
+        "title": "RefinementPlan"
+      },
+      "RefinementPreflightRequest": {
+        "properties": {
+          "project_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Project Revision"
+          },
+          "chain_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Chain Revision"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "gemini-3.6-flash",
+              "gemini-4-argon"
+            ],
+            "title": "Model",
+            "default": "gemini-3.6-flash"
+          },
+          "samples": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "riff-1",
+                "riff-2",
+                "lead-1",
+                "lead-2"
+              ]
+            },
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Samples"
+          },
+          "search": {
+            "type": "string",
+            "enum": [
+              "explore",
+              "local"
+            ],
+            "title": "Search",
+            "default": "explore"
+          },
+          "upload_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_revision",
+          "chain_revision"
+        ],
+        "title": "RefinementPreflightRequest"
+      },
+      "RefinementRecord": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "partial",
+              "cancelled",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project_revision": {
+            "type": "integer",
+            "title": "Project Revision"
+          },
+          "chain_revision": {
+            "type": "integer",
+            "title": "Chain Revision"
+          },
+          "base_chain_sha256": {
+            "type": "string",
+            "title": "Base Chain Sha256"
+          },
+          "plan_sha256": {
+            "type": "string",
+            "title": "Plan Sha256"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "reference": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Reference"
+          },
+          "samples": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "riff-1",
+                "riff-2",
+                "lead-1",
+                "lead-2"
+              ]
+            },
+            "type": "array",
+            "title": "Samples"
+          },
+          "search": {
+            "type": "string",
+            "enum": [
+              "explore",
+              "local"
+            ],
+            "title": "Search",
+            "default": "explore"
+          },
+          "confirmed_max_new_requests": {
+            "type": "integer",
+            "title": "Confirmed Max New Requests"
+          },
+          "new_generate_requests": {
+            "type": "integer",
+            "title": "New Generate Requests",
+            "default": 0
+          },
+          "new_upload_requests": {
+            "type": "integer",
+            "title": "New Upload Requests",
+            "default": 0
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/VariantSummary"
+            },
+            "type": "array",
+            "title": "Variants"
+          },
+          "judgments": {
+            "items": {
+              "$ref": "#/components/schemas/SampleJudgment"
+            },
+            "type": "array",
+            "title": "Judgments"
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefinementSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Evidence"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Limitations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "project_id",
+          "project_revision",
+          "chain_revision",
+          "base_chain_sha256",
+          "plan_sha256",
+          "model",
+          "reference",
+          "samples",
+          "confirmed_max_new_requests",
+          "created_at",
+          "variants"
+        ],
+        "title": "RefinementRecord"
+      },
+      "RefinementRequest": {
+        "properties": {
+          "project_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Project Revision"
+          },
+          "chain_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Chain Revision"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "gemini-3.6-flash",
+              "gemini-4-argon"
+            ],
+            "title": "Model",
+            "default": "gemini-3.6-flash"
+          },
+          "samples": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "riff-1",
+                "riff-2",
+                "lead-1",
+                "lead-2"
+              ]
+            },
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Samples"
+          },
+          "search": {
+            "type": "string",
+            "enum": [
+              "explore",
+              "local"
+            ],
+            "title": "Search",
+            "default": "explore"
+          },
+          "upload_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Id"
+          },
+          "plan_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Plan Sha256"
+          },
+          "max_new_requests": {
+            "type": "integer",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Max New Requests"
+          },
+          "external_consent": {
+            "type": "boolean",
+            "title": "External Consent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_revision",
+          "chain_revision",
+          "plan_sha256",
+          "max_new_requests",
+          "external_consent"
+        ],
+        "title": "RefinementRequest"
+      },
+      "RefinementSuggestion": {
+        "properties": {
+          "variant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Id"
+          },
+          "basis": {
+            "type": "string",
+            "title": "Basis"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "variant_id",
+          "basis"
+        ],
+        "title": "RefinementSuggestion"
+      },
+      "RefinementVariant": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "current",
+              "variant",
+              "control"
+            ],
+            "title": "Role"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "chain": {
+            "$ref": "#/components/schemas/ChainDraft"
+          },
+          "chain_sha256": {
+            "type": "string",
+            "title": "Chain Sha256"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "label",
+          "description",
+          "chain",
+          "chain_sha256"
+        ],
+        "title": "RefinementVariant"
+      },
       "ResourceDefinition": {
         "properties": {
           "asset": {
@@ -2087,6 +2842,138 @@
           "file_size_bytes"
         ],
         "title": "ResourceDefinition"
+      },
+      "SampleJudgment": {
+        "properties": {
+          "sample": {
+            "type": "string",
+            "enum": [
+              "riff-1",
+              "riff-2",
+              "lead-1",
+              "lead-2"
+            ],
+            "title": "Sample"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "judged",
+              "invalid",
+              "failed",
+              "not_attempted"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reference_guitar_audible": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Guitar Audible"
+          },
+          "closest_is_close_match": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closest Is Close Match"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/VariantObservation"
+            },
+            "type": "array",
+            "title": "Observations"
+          },
+          "control_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Passed"
+          },
+          "control_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Detail"
+          },
+          "finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Reason"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "generate_requests": {
+            "type": "integer",
+            "title": "Generate Requests",
+            "default": 0
+          },
+          "upload_requests": {
+            "type": "integer",
+            "title": "Upload Requests",
+            "default": 0
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sample",
+          "status"
+        ],
+        "title": "SampleJudgment"
       },
       "SourceRef": {
         "properties": {
@@ -2553,6 +3440,146 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VariantObservation": {
+        "properties": {
+          "variant_id": {
+            "type": "string",
+            "title": "Variant Id"
+          },
+          "gain": {
+            "type": "string",
+            "title": "Gain"
+          },
+          "brightness": {
+            "type": "string",
+            "title": "Brightness"
+          },
+          "bass": {
+            "type": "string",
+            "title": "Bass"
+          },
+          "mids": {
+            "type": "string",
+            "title": "Mids"
+          },
+          "attack": {
+            "type": "string",
+            "title": "Attack"
+          },
+          "compression": {
+            "type": "string",
+            "title": "Compression"
+          },
+          "ambience": {
+            "type": "string",
+            "title": "Ambience"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "variant_id",
+          "gain",
+          "brightness",
+          "bass",
+          "mids",
+          "attack",
+          "compression",
+          "ambience",
+          "rank"
+        ],
+        "title": "VariantObservation"
+      },
+      "VariantRender": {
+        "properties": {
+          "sample": {
+            "type": "string",
+            "enum": [
+              "riff-1",
+              "riff-2",
+              "lead-1",
+              "lead-2"
+            ],
+            "title": "Sample"
+          },
+          "audio_sha256": {
+            "type": "string",
+            "title": "Audio Sha256"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "title": "Duration Seconds"
+          },
+          "rms": {
+            "type": "number",
+            "title": "Rms"
+          },
+          "peak": {
+            "type": "number",
+            "title": "Peak"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sample",
+          "audio_sha256",
+          "duration_seconds",
+          "rms",
+          "peak"
+        ],
+        "title": "VariantRender"
+      },
+      "VariantSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "current",
+              "variant",
+              "control"
+            ],
+            "title": "Role"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "chain_sha256": {
+            "type": "string",
+            "title": "Chain Sha256"
+          },
+          "renders": {
+            "items": {
+              "$ref": "#/components/schemas/VariantRender"
+            },
+            "type": "array",
+            "title": "Renders"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "label",
+          "description",
+          "chain_sha256"
+        ],
+        "title": "VariantSummary"
       }
     }
   }
