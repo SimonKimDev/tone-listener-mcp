@@ -9,6 +9,8 @@ from tone_listener_mcp.listener import clear_listening_cache
 def prevent_live_gemini(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     for name in (
+        "TONE_LISTENER_MODEL",
+        "TONE_LISTENER_MAX_SECONDS",
         "TONE_LISTENER_REQUEST_DEADLINE_SECONDS",
         "TONE_LISTENER_MAX_CONCURRENT_REQUESTS",
         "TONE_LISTENER_CACHE_ENTRIES",
