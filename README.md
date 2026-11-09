@@ -283,13 +283,25 @@ One deadline (`TONE_LISTENER_REQUEST_DEADLINE_SECONDS`) bounds the total elapsed
 waiting for an inference slot, each upload, upload processing (also capped at 30 s) and
 generation. It is enforced on every socket connect, TLS handshake, read and write of every
 provider request, including the YouTube 503 retry, so a slowly streamed response or a series of
-individually quick requests still stops at the deadline with category `deadline`. A response
-that completes after the deadline is never returned or cached. The YouTube retry (one, after
-1 s) only happens if at least 1 s of budget would remain. Remote upload cleanup always runs
+individually quick requests still stops at the deadline with category `deadline`. When a host
+resolves to several addresses, they are tried in order and share that one deadline, rather than
+each getting a full connect timeout. A response that completes after the deadline is never
+returned or cached. The YouTube retry (one, after 1 s, on a 503 or a transient connect/timeout
+error) only covers the generate request, and only happens if at least 1 s of budget would remain;
+uploads, upload status checks and deletes are not retried. Remote upload cleanup always runs
 afterwards, even past the deadline, with its own 10 s total budget per file, so cleanup can
-extend a call by at most 10 s per uploaded file. Not covered: DNS resolution, which cannot be
-interrupted, and the SDK's internal resumable-upload backoff (only used when the server omits the
-upload status), whose sleep can delay the `deadline` failure until the next socket operation.
+extend a call by at most 10 s per uploaded file.
+The deadline is enforced by wrapping the connection pools of a per-request httpx2 client passed
+to google-genai, which relies on private httpx2/httpcore2 internals (`_transport`, `_mounts`,
+`_pool._network_backend`). If those change in a new httpx2 release, listening fails closed with
+category `local_io` at stage `create_client` instead of running without a deadline.
+Not covered by the deadline:
+- DNS resolution, which cannot be interrupted.
+- The SDK's internal resumable-upload backoff (only used when the server omits the upload
+  status), whose sleep can delay the `deadline` failure until the next socket operation.
+- Within a very slowly draining upload, the deadline is rechecked every 64 KiB rather than on
+  every send.
+
 When all `TONE_LISTENER_MAX_CONCURRENT_REQUESTS` slots stay busy until the deadline, the
 result fails with category `busy` at stage `queue` without uploading anything. A slot is held
 until the request, including its cleanup, has fully finished, so no provider request outlives

@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import socket
 import threading
 import time
 from collections import OrderedDict
@@ -210,13 +211,36 @@ class _DeadlineBackend:
     def connect_tcp(
         self, host, port, timeout=None, local_address=None, socket_options=None
     ) -> _DeadlineStream:
-        stream = self._deadline.run(
-            lambda budget: self._backend.connect_tcp(
-                host, port, budget, local_address, socket_options
-            ),
-            timeout,
-        )
-        return _DeadlineStream(stream, self._deadline)
+        # socket.create_connection would give each resolved address the full timeout, so
+        # several black-holed addresses could take N x the budget. Resolve once (DNS itself is
+        # not interruptible) and try the addresses in order against the one shared deadline.
+        try:
+            addresses = [
+                f"{sockaddr[0]}%{sockaddr[3]}"
+                if family == socket.AF_INET6 and sockaddr[3] else sockaddr[0]
+                for family, _, _, _, sockaddr in socket.getaddrinfo(
+                    host, port, type=socket.SOCK_STREAM
+                )
+            ]
+        except OSError:
+            addresses = [host]  # Let the backend raise its usual mapped resolution error.
+        last_error: Exception | None = None
+        for address in addresses or [host]:
+            try:
+                stream = self._deadline.run(
+                    lambda budget, address=address: self._backend.connect_tcp(
+                        address, port, budget, local_address, socket_options
+                    ),
+                    timeout,
+                )
+            except DeadlineExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001 - try the next address, like create_connection
+                last_error = exc
+                continue
+            return _DeadlineStream(stream, self._deadline)
+        assert last_error is not None
+        raise last_error
 
     def connect_unix_socket(self, path, timeout=None, socket_options=None) -> _DeadlineStream:
         stream = self._deadline.run(
