@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import anyio
 import httpx
+import httpx2
 import numpy as np
 import pytest
 import soundfile as sf
@@ -14,7 +15,12 @@ from google.genai import errors, types
 from test_schemas import undeclared
 
 from tone_listener_mcp.audio_io import AudioClip
-from tone_listener_mcp.listener import _inference_slots, listen, request_settings
+from tone_listener_mcp.listener import (
+    _inference_slots,
+    listen,
+    listen_comparison,
+    request_settings,
+)
 from tone_listener_mcp.metrics import measure
 from tone_listener_mcp.schemas import AnalyzeAudioResponse
 
@@ -140,6 +146,9 @@ def test_cache_can_be_disabled_and_failures_are_not_cached(client, audio, monkey
         (errors.ServerError(503, {"error": {"message": "secret"}}), "capacity", 503, True),
         (httpx.ConnectError("secret"), "network", None, True),
         (httpx.ReadTimeout("secret"), "deadline", None, True),
+        # google-genai 3.x uses the httpx2 backend by default; its errors are unrelated to httpx.
+        (httpx2.ConnectError("secret"), "network", None, True),
+        (httpx2.ReadTimeout("secret"), "deadline", None, True),
     ],
 )
 def test_failure_categories_never_echo_provider_text(
@@ -153,6 +162,29 @@ def test_failure_categories_never_echo_provider_text(
     assert result["listening_failure_stage"] == "generate"
     assert "secret" not in json.dumps(result)
     client.files.delete.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "delete_error",
+    [httpx2.ReadTimeout("secret"), httpx2.ConnectError("secret"), RuntimeError("secret")],
+)
+def test_failed_delete_does_not_skip_remaining_cleanup(client, audio, delete_error):
+    client.files.upload.side_effect = [
+        SimpleNamespace(name=name, uri=f"https://example.invalid/{name}",
+                        state=types.FileState.ACTIVE)
+        for name in ("files/A", "files/B")
+    ]
+    client.models.generate_content.side_effect = httpx2.ReadTimeout("secret")
+    client.files.delete.side_effect = [delete_error, None]
+    result = listen_comparison(audio, audio)
+    assert result["failure"]["category"] == "deadline"
+    assert [call.kwargs["name"] for call in client.files.delete.call_args_list] == [
+        "files/A", "files/B"
+    ]
+    assert result["cleanup_warnings"] == [
+        f"Remote upload cleanup failed ({type(delete_error).__name__})"
+    ]
+    assert "secret" not in json.dumps(result)
 
 
 def test_invalid_response_category(client, audio):

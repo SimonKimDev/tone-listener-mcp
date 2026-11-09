@@ -31,6 +31,18 @@ from tone_listener_mcp.audio_io import (
 )
 from tone_listener_mcp.metrics import gated_power
 
+try:  # google-genai 3.x defaults to the httpx2 backend, whose errors are unrelated to httpx.
+    import httpx2
+except ImportError:  # pragma: no cover - httpx2 is a google-genai 3.x dependency
+    httpx2 = None
+
+HTTP_ERRORS: tuple[type[Exception], ...] = (httpx.HTTPError,) + (
+    (httpx2.HTTPError,) if httpx2 is not None else ()
+)
+HTTP_TIMEOUTS: tuple[type[Exception], ...] = (httpx.TimeoutException,) + (
+    (httpx2.TimeoutException,) if httpx2 is not None else ()
+)
+
 DEFAULT_MODEL = "gemini-3.8-flash"
 logger = logging.getLogger(__name__)
 
@@ -175,11 +187,11 @@ def _failure_info(exc: Exception | None, stage: str | None) -> dict:
         category = "audio_preparation"
     elif isinstance(exc, ListeningBusy):
         category = "busy"
-    elif isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+    elif isinstance(exc, (TimeoutError, *HTTP_TIMEOUTS)):
         category = "deadline"
     elif isinstance(exc, errors.APIError):
         category = STATUS_CATEGORIES.get(code, "provider_error")
-    elif isinstance(exc, httpx.HTTPError):
+    elif isinstance(exc, HTTP_ERRORS):
         category = "network"
     elif isinstance(exc, ValueError):
         category = "upload_failed" if stage in ("upload", "upload_processing") else (
@@ -431,7 +443,7 @@ def _request(
         )
         return finish()
     failure_types = (
-        errors.APIError, httpx.HTTPError, OSError, ValueError, TimeoutError, ListeningBusy
+        errors.APIError, *HTTP_ERRORS, OSError, ValueError, TimeoutError, ListeningBusy
     )
     try:
         clips = [prepare_upload(clip) for clip in clips]
@@ -595,7 +607,8 @@ def _request(
                                 timeout=int(CLEANUP_TIMEOUT_SECONDS * 1000)
                             )),
                         )
-                    except failure_types as exc:
+                    # One failed delete must not skip the rest; log only the type, not SDK text.
+                    except Exception as exc:  # noqa: BLE001
                         warning = f"Remote upload cleanup failed ({type(exc).__name__})"
                         logger.warning("%s", warning)
                         result["cleanup_warnings"].append(warning)
