@@ -194,11 +194,26 @@ API headers or response bodies.
 
 ## Failures, budgets, diagnostics and caching
 
-`failure` is `null` on success, otherwise `{category, http_status, retryable, suggestion}`.
+`failure` is `null` on success, otherwise it includes
+`{category, http_status, retryable, suggestion, retry_after_seconds, retry_after_invalid,
+daily_request_limit, daily_token_limit}`.
 Categories: `not_configured`, `audio_preparation`, `authentication` (401), `permission` (403),
 `model_unavailable` (404), `invalid_request` (400), `quota` (429), `capacity` (5xx),
 `provider_error`, `network`, `deadline`, `busy`, `upload_failed`, `invalid_response` and
-`local_io`. Suggestions are fixed text; provider messages are never returned.
+`local_io`. A 429 with recognized structured quota IDs refines `quota` to
+`daily_quota` or `rate_window`; daily quota takes precedence if both are reported.
+`daily_quota` is not immediately retryable; `rate_window` is retryable.
+Suggestions are fixed text; provider messages are never returned.
+
+`retry_after_seconds` is the maximum valid delay from the HTTP `Retry-After` header
+(seconds or an HTTP date) and Google `RetryInfo.retryDelay`, or `null` if neither
+is valid. Past HTTP dates yield zero. `retry_after_invalid` flags a malformed
+`Retry-After` header even when a valid `RetryInfo` delay exists. Daily request/token
+limits are the minimum nonnegative integer values reported in matching daily
+`QuotaFailure` violations, or `null` if unavailable. Only numeric values up to
+12 digits are accepted. Unknown/malformed details do not override the generic
+category. No raw headers, quota IDs, descriptions, URLs, provider messages or
+payloads are returned. These hints do not trigger automatic quota retries.
 
 One deadline (`TONE_LISTENER_REQUEST_DEADLINE_SECONDS`) bounds the total elapsed time of
 waiting for an inference slot, each upload, upload processing (also capped at 30 s) and
@@ -213,6 +228,7 @@ slow audio preparation) fails with `deadline` at stage `queue`, exactly like a m
 the cached entry stays valid for later requests. The YouTube retry (one, after 1 s, on a 503
 or a transient connect/timeout error) only covers the generate request, and only happens if at
 least 1 s of budget would remain; uploads, upload status checks and deletes are not retried.
+SDK HTTP retries are explicitly disabled; only that deadline-aware generate retry is allowed.
 Remote upload cleanup always runs afterwards, even past the deadline, with its own 10 s total
 budget per file, so cleanup can extend a call by at most 10 s per uploaded file (including
 returning a result that was accepted before the deadline).
@@ -239,6 +255,17 @@ was attempted; a `hit` with a `deadline` failure means a matching cached result 
 not returned because the deadline had passed), provider token `usage` when reported, and `preprocessing` per uploaded clip
 (original sample rate/channels/duration and the 16 kHz mono upload format).
 
+Every result also includes root-level `request_counts`:
+`{generate, upload, poll_upload, delete_upload}`. Counts are actual invocations of
+`models.generate_content`, `files.upload`, `files.get` and `files.delete` within
+this call, incremented immediately before invocation, including unsuccessful
+attempts and cleanup. Cache hits, missing keys and failures before SDK invocation
+have zero counts. Counts are not cached or inferred from token usage. These are
+SDK-operation counts, not billing totals or wire-level HTTP counts: a resumable
+upload can involve multiple HTTP exchanges inside one `files.upload` invocation.
+Cleanup counts include failed delete attempts; cleanup errors remain separate
+in `cleanup_warnings` and do not discard an otherwise valid profile.
+
 Successful, validated results are cached in memory for the life of the server process.
 The key covers the model, prompt version, schema version, system instructions, prompt
 (including your question/focus), YouTube URL and interval, and the exact prepared audio
@@ -250,6 +277,99 @@ Clients that send an MCP progress token receive progress notifications for audio
 preparation, each upload, generation and validation (or "Served from cache").
 **Confidence is model self-assessment, not calibrated accuracy.** Live listening
 quality requires evaluation against recordings with known changes.
+
+## Python library API
+
+Import from `tone_listener_mcp.listener`; no MCP server is needed:
+
+```python
+listen_tone_profile(
+    clip: AudioClip, progress: Progress | None = None, *,
+    use_cache: bool = False, request_attempts: Literal[1, 2] | None = 1,
+) -> dict
+
+listen_youtube_tone_profile(
+    url: str, start: float | None = None, end: float | None = None,
+    progress: Progress | None = None, *,
+    use_cache: bool = False, request_attempts: Literal[1, 2] | None = 1,
+) -> dict
+
+youtube_input(
+    url: str, start: float | None = None, end: float | None = None,
+) -> tuple[str, float, float, google.genai.types.Part]
+
+failure_info(exc: Exception | None, stage: str | None = None) -> dict
+```
+
+`AudioClip` and `load_audio(path, start=None, end=None)` are available from
+`tone_listener_mcp.audio_io`. `Progress` is an optional `(step, total, message)`
+callback; callback errors do not fail listening.
+
+Both profile functions return the standard listening envelope described above,
+with a validated `ToneProfile.model_dump(mode="json")` in `listening`, or `null`
+plus the usual sanitized `failure` and `listening_unavailable`. They include
+diagnostics, request counts, cleanup warnings and upload metadata. The YouTube
+variant additionally returns `source`, `metrics: null` and `metrics_unavailable`;
+local profiles do not compute DSP metrics (use `metrics.measure` separately).
+Use `ToneProfile.model_validate(result["listening"])` if a Pydantic instance is
+preferred. There is no `failure_info` field alias: result metadata lives in `failure`.
+
+`ToneProfile` has fixed categorical axes:
+
+| Axis | Values |
+|---|---|
+| `guitar_dominance` | clear, mixed, uncertain |
+| `gain` | clean, edge-of-breakup, crunch, overdrive, distortion, high-gain, uncertain |
+| `brightness` | dark, slightly-dark, balanced, slightly-bright, bright, uncertain |
+| `bass_level` | low, typical, high, uncertain |
+| `bass_tightness` | loose, neutral, tight, uncertain |
+| `mids` | scooped, neutral, present, forward, uncertain |
+| `attack` | soft, rounded, balanced, sharp, uncertain |
+| `compression` | dynamic, moderate, compressed, squashed, uncertain |
+| `sustain` | short, typical, long, uncertain |
+| `reverb`, `delay`, `modulation` | `ProfileEffect` objects (see below) |
+| `modulation_type` | none, chorus, flanger, phaser, tremolo, other, uncertain (default) |
+
+`ProfileEffect` has `presence` (absent, possible, present, uncertain) and
+`prominence` (none, subtle, moderate, prominent, uncertain). An absent effect must
+have none prominence; a present effect cannot have none prominence. Profiles also
+require timestamped `evidence` and a list of `uncertainties`. Evidence timestamps
+must be finite, nonnegative and no greater than the selected clip/interval duration,
+relative to its start. Unknown categories, contradictory effects and out-of-range
+evidence fail with the existing `invalid_response` type, not a coerced category.
+
+`TONE_PROFILE_INSTRUCTIONS` defines these axes in audible, neutral terms and is used
+instead of the prose listening instructions. The same source-specific safeguards
+are appended: local audio is 16 kHz mono; YouTube imagery, titles and visible gear
+are not tone evidence. Silence, inaccessible audio and mix ambiguity require
+uncertainty. Profiles do not infer equipment, map effects to an application,
+render audio or implement UI.
+
+All six `listen*` functions accept keyword-only `use_cache` and `request_attempts`.
+`use_cache=False` bypasses both reads and writes for this call without clearing or
+changing the shared cache. `use_cache=True` permits caching only when
+`TONE_LISTENER_CACHE_ENTRIES` is nonzero. `request_attempts` caps generate attempts
+including the original: `1` prohibits the YouTube retry; `2` permits at most the
+existing deadline-aware retry on a 503 or transient connection/timeout error.
+Local-only generation always has at most one attempt. `None` retains those
+transport defaults. Other values raise `ValueError` before I/O. Invalid
+`use_cache` types raise `TypeError`.
+
+Profile calls default to `use_cache=False, request_attempts=1`, so independent
+evaluation repeats make independent calls. Existing `listen`, `listen_comparison`,
+`listen_youtube` and `listen_youtube_comparison` keep `use_cache=True,
+request_attempts=None`. Options do not relax deadlines, inference-slot limits,
+upload processing limits, validation or bounded cleanup; attempt settings do not
+change response semantics and therefore do not change cache keys. These library
+options are not exposed as MCP tool arguments, and no new MCP tool is registered.
+
+`youtube_input` performs the same URL/interval validation as listening without
+network or file I/O. It returns the canonical URL, normalized start/end seconds
+and SDK part carrying interval metadata; invalid inputs raise `ValueError`.
+`failure_info` is the shared allowlisted failure formatter for callers with their
+own SDK operations. `stage` distinguishes upload/processing `ValueError` from
+invalid model output; `exc=None` represents missing configuration. It returns the
+same fields as `failure` and never returns provider payloads or messages.
 
 ## YouTube reference vs local recording
 

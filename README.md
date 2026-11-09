@@ -179,6 +179,37 @@ listening result includes `diagnostics`. See the [tool reference](docs/reference
 for input rules, metric definitions, loudness matching, EQ hints, upload
 preprocessing, failure categories, deadlines, caching and progress notifications.
 
+## Python library API
+
+Applications can import reusable listening without running an MCP server. Structured
+tone profiles use fixed categorical axes rather than prose-to-category conversion:
+
+```python
+from tone_listener_mcp.audio_io import load_audio
+from tone_listener_mcp.listener import ToneProfile, listen_tone_profile
+
+result = listen_tone_profile(load_audio("guitar.wav", start=0, end=10))
+if result["listening"] is not None:
+    profile = ToneProfile.model_validate(result["listening"])
+    print(profile.gain, profile.brightness)
+else:
+    print(result["failure"])  # Sanitized category, status and recovery hints
+print(result["request_counts"])  # generate / upload / poll_upload / delete_upload
+```
+
+`listen_youtube_tone_profile(url, start, end)` supports public video intervals with
+no audio extraction. Both profile functions default to **uncached, single-attempt**
+listening; they retain the same deadlines, concurrency limits, preprocessing and
+cleanup as ordinary listening. Every `listen*` function accepts keyword-only
+`use_cache` and `request_attempts`; ordinary listening keeps its existing defaults.
+`youtube_input` validates video intervals without I/O, and `failure_info` sanitizes
+SDK exceptions for callers making their own requests.
+
+The [library reference](docs/reference.md#python-library-api) documents signatures,
+categories, counters and failure metadata. Profiles describe audible tone only;
+Soundshed mappings, rendering and UI belong in consuming applications. The six MCP
+tools are unchanged; profiles are a library API, not an additional tool.
+
 ## Benchmark status
 
 | Check | Status | Details |
