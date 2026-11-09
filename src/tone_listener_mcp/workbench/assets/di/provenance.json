@@ -1,0 +1,74 @@
+{
+  "license": "CC0-1.0",
+  "repository": "https://github.com/danieljfarrell/dry-guitar-samples",
+  "revision": "cd4e940e13eebb378c193d3313754a74f34ff817",
+  "recording_context": "Dry electric-guitar DI recorded directly to a Scarlett Solo, per upstream README.",
+  "auditioned_by_maintainer": false,
+  "samples": [
+    {
+      "file": "riff-1.wav",
+      "upstream_file": "Riff 1.wav",
+      "sha256": "66d8ad132212fae19a7814cbe96b5b4a503f37360e3b5312f4ed080992f3b4a6"
+    },
+    {
+      "file": "riff-2.wav",
+      "upstream_file": "Riff 2.wav",
+      "sha256": "2a5c57b4af710716559b78547bfbe6fafa65b357ca96e54ce55f77689ef0785b"
+    }
+  ],
+  "additional_sources": [
+    {
+      "dataset": "Guitar-TECHS",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "record": "https://zenodo.org/records/14963133",
+      "record_id": "14963133",
+      "source_url": "https://zenodo.org/api/records/14963133/files/P3_music.zip/content",
+      "source_file": "P3_music.zip",
+      "source_file_sha256": "033489e22600751fb5a1633e7d856b901c6782e0486fa02135e830780d9dbfe2",
+      "source_file_md5": "071ba80aecf00f4a31fbd167b3f22198",
+      "source_file_bytes": 129505089,
+      "project_site": "https://guitar-techs.github.io/",
+      "attribution": "Guitar-TECHS dataset by Hegel Pedroza, Wallace Abreu, Ryan M. Corey and Iran R. Roman (Zenodo record 14963133), licensed CC BY 4.0. Excerpts were trimmed and resampled; see processing.",
+      "citation": "Pedroza, Hegel, et al. \"Guitar-TECHS: An Electric Guitar Dataset Covering Techniques, Musical Excerpts, Chords and Scales Using a Diverse Array of Hardware.\" ICASSP 2025-2025 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP). IEEE, 2025. doi:10.1109/ICASSP49660.2025.10887996",
+      "doi": "10.1109/ICASSP49660.2025.10887996",
+      "recording_context": {
+        "player": "Player 03",
+        "guitar": "Sire T7",
+        "string_gauge": "0.010 - 0.046",
+        "pickup": "Bridge-Neck",
+        "audio_interface": "UMC202HD",
+        "note": "Published per-player hardware table, quoted verbatim. 'Bridge-Neck' is not documented per excerpt; it is not verified as a simultaneous bridge+neck selection for these files. Signal reached the interface through a splitter (also feeding an amplifier)."
+      },
+      "processing": "scripts/prepare_lead_dis.py: verify zip and member sha256; verify exact dual-mono (channels bit-identical) and keep channel 0; trim at the nearest zero crossing to the stated bounds; resample 48 kHz -> 44.1 kHz with scipy.signal.resample_poly(up=147, down=160; default Kaiser beta 5.0 polyphase FIR); 10 ms raised-cosine fade-in/out at the two cut points only; write 24-bit PCM without dither. No normalization or gain applied.",
+      "auditioned_by_maintainer": false,
+      "selection_note": "lead-1 is a mostly monophonic upper-register line (median MIDI 72; >=3-note overlap in ~6% of sounding time in the whole file). lead-2 (directinput_10) is a single-note pedal-tone riff (median MIDI ~64-66, ringing overlaps but few >=3-note overlaps in the chosen bars); directinput_03 was rejected because >=3 annotated notes overlap in ~71% of its sounding time (chordal). Register/polyphony are from the dataset's Fishman per-string MIDI.",
+      "samples": [
+        {
+          "file": "lead-1.wav",
+          "upstream_member": "P3_music/audio/directinput/directinput_08.wav",
+          "upstream_sha256": "f58cd8dcd68eeec7c9e58839e7161671ba3af9963957e35f1f04a1f2644d3ff3",
+          "trim_start_seconds": 8.5995,
+          "trim_end_seconds": 23.799271,
+          "trim_start_sample_48k": 412776,
+          "trim_end_sample_48k": 1142365,
+          "duration_seconds": 15.2,
+          "sha256": "95728d3debb102b0020d17149c9c68574056ccb42e59608a00f91533ec2d1df1",
+          "musical_note": "Phrase-bounded lead excerpt: starts and ends inside annotated silences (envelope about -56/-58 dBFS)."
+        },
+        {
+          "file": "lead-2.wav",
+          "upstream_member": "P3_music/audio/directinput/directinput_10.wav",
+          "upstream_sha256": "d50cc046c4d1d39899c534738377b9d0c5d5396bbed980a029c61b7e4a77d6b8",
+          "trim_start_seconds": 3.860187,
+          "trim_end_seconds": 16.289208,
+          "trim_start_sample_48k": 185289,
+          "trim_end_sample_48k": 781882,
+          "duration_seconds": 12.429,
+          "sha256": "8a03830769d75fd14700ad6c85297ef2535612f8942eafb78624f30e994b849d",
+          "musical_note": "Bars 2-4 at the annotated 58 BPM: two repeats of the one-bar pedal riff plus its turnaround, cut before the next section; playing is continuous, so the edges fall on sustained notes (hence the 10 ms fades)."
+        }
+      ]
+    }
+  ]
+}

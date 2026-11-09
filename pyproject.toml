@@ -31,6 +31,10 @@ tone-listener-mcp = "tone_listener_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tone_listener_mcp"]
+include = [
+    "src/tone_listener_mcp/workbench/assets/di/*",
+    "src/tone_listener_mcp/workbench/static/**",
+]
 
 [tool.ruff]
 line-length = 100
@@ -39,3 +43,4 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = ["native_integration: opt-in installed Soundshed VST3 tests, never default CI"]

@@ -7,6 +7,7 @@ import math
 import os
 import re
 import time
+from email.utils import parsedate_to_datetime
 from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
@@ -14,7 +15,7 @@ import httpx
 import numpy as np
 from google import genai
 from google.genai import errors, types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from tone_listener_mcp.audio_io import (
     AudioClip,
@@ -73,6 +74,45 @@ class ListeningResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class ProfileEffect(BaseModel):
+    presence: Literal["absent", "possible", "present", "uncertain"]
+    prominence: Literal["none", "subtle", "moderate", "prominent", "uncertain"]
+
+    @model_validator(mode="after")
+    def coherent_presence(self):
+        if self.presence == "absent" and self.prominence != "none":
+            raise ValueError("An absent effect must have no prominence")
+        if self.presence == "present" and self.prominence == "none":
+            raise ValueError("A present effect must have audible or uncertain prominence")
+        return self
+
+
+class ToneProfile(BaseModel):
+    """Fixed categorical axes for selected workbench intent and blinded evaluation."""
+
+    guitar_dominance: Literal["clear", "mixed", "uncertain"]
+    gain: Literal[
+        "clean", "edge-of-breakup", "crunch", "overdrive", "distortion", "high-gain", "uncertain"
+    ]
+    brightness: Literal[
+        "dark", "slightly-dark", "balanced", "slightly-bright", "bright", "uncertain"
+    ]
+    bass_level: Literal["low", "typical", "high", "uncertain"]
+    bass_tightness: Literal["loose", "neutral", "tight", "uncertain"]
+    mids: Literal["scooped", "neutral", "present", "forward", "uncertain"]
+    attack: Literal["soft", "rounded", "balanced", "sharp", "uncertain"]
+    compression: Literal["dynamic", "moderate", "compressed", "squashed", "uncertain"]
+    sustain: Literal["short", "typical", "long", "uncertain"]
+    reverb: ProfileEffect
+    delay: ProfileEffect
+    modulation: ProfileEffect
+    modulation_type: Literal[
+        "none", "chorus", "flanger", "phaser", "tremolo", "other", "uncertain"
+    ] = "uncertain"
+    evidence: list[Evidence]
+    uncertainties: list[str]
+
+
 class ComparisonResult(BaseModel):
     differences: list[str]
     brighter: Literal["A", "B", "similar", "uncertain"]
@@ -92,12 +132,81 @@ def _failure_reason(exc: Exception) -> str:
     return reason + (f", status {code})" if isinstance(code, int) else ")")
 
 
+def _profile_failure_info(exc: Exception) -> dict:
+    """Return allowlisted diagnostics, never the provider payload or message."""
+    code = getattr(exc, "code", None)
+    payload = getattr(exc, "details", {})
+    error = payload.get("error", payload) if isinstance(payload, dict) else {}
+    details = error.get("details", []) if isinstance(error, dict) else []
+    details = details if isinstance(details, list) else []
+    quota_ids = []
+    daily_limits = {"requests": [], "tokens": []}
+    for detail in details:
+        violations = detail.get("violations") if isinstance(detail, dict) else None
+        if isinstance(violations, list):
+            quota_ids.extend(
+                str(item.get("quotaId", "")).lower()
+                for item in violations if isinstance(item, dict)
+            )
+            for item in violations:
+                if not isinstance(item, dict):
+                    continue
+                identifier = str(item.get("quotaId", "")).lower()
+                value = str(item.get("quotaValue", ""))
+                if ("perday" in identifier or "per_day" in identifier) and re.fullmatch(r"\d{1,12}", value):
+                    for unit, values in daily_limits.items():
+                        if unit in identifier:
+                            values.append(int(value))
+    category = {
+        401: "authentication", 403: "permission", 404: "model_unavailable",
+        429: "quota_unspecified", 503: "capacity",
+    }.get(code, "request_failure")
+    if code == 429:
+        if any("perday" in value or "per_day" in value for value in quota_ids):
+            category = "daily_quota"
+        elif any("perminute" in value or "per_minute" in value for value in quota_ids):
+            category = "rate_window"
+    retry_values = []
+    response = getattr(exc, "response", None)
+    header = response.headers.get("Retry-After") if response is not None else None
+    retry_invalid = False
+    if header:
+        try:
+            seconds = float(header)
+        except ValueError:
+            try:
+                seconds = parsedate_to_datetime(header).timestamp() - time.time()
+            except (ValueError, TypeError, OverflowError):
+                seconds = None
+        if seconds is not None and math.isfinite(seconds):
+            retry_values.append(max(0.0, seconds))
+        else:
+            retry_invalid = True
+    for detail in details:
+        if isinstance(detail, dict) and str(detail.get("@type", "")).endswith("RetryInfo"):
+            delay = detail.get("retryDelay")
+            if isinstance(delay, str) and re.fullmatch(r"\d+(?:\.\d+)?s", delay):
+                seconds = float(delay[:-1])
+                if math.isfinite(seconds):
+                    retry_values.append(seconds)
+    return {
+        "http_status": code if isinstance(code, int) else None,
+        "category": category,
+        "retry_after_seconds": max(retry_values) if retry_values else None,
+        "retry_after_invalid": retry_invalid,
+        "daily_request_limit": min(daily_limits["requests"]) if daily_limits["requests"] else None,
+        "daily_token_limit": min(daily_limits["tokens"]) if daily_limits["tokens"] else None,
+    }
+
+
 def _request(
     clips: list[AudioClip],
     prompt: str,
     schema: type[BaseModel],
     youtube_part: types.Part | None = None,
     evidence_duration: float | None = None,
+    instructions: str | None = None,
+    request_attempts: int | None = None,
 ) -> dict:
     model = os.environ.get("TONE_LISTENER_MODEL", DEFAULT_MODEL)
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -111,6 +220,12 @@ def _request(
         "listening_failure_stage": None,
         "input_transport": "youtube_url" if youtube_part is not None else "files",
     }
+    request_counts = {"generate": 0, "upload": 0, "poll_upload": 0, "delete_upload": 0}
+    if request_attempts is not None:
+        if request_attempts != 1:
+            raise ValueError("Instrumented profile requests require exactly one SDK attempt")
+        result["request_counts"] = request_counts
+        result["failure_info"] = None
     if not api_key:
         result["listening_unavailable"] = (
             "GEMINI_API_KEY is not set; YouTube listening unavailable, no local metrics"
@@ -152,15 +267,21 @@ def _request(
             for clip in clips
         ]
         result["upload_gain_db"] = float(20 * np.log10(gain))
+    if request_attempts == 1:
+        retry_options = types.HttpRetryOptions(attempts=1)
+    elif youtube_part is not None:
+        retry_options = types.HttpRetryOptions(
+            attempts=2, initial_delay=1, max_delay=3, http_status_codes=[503]
+        )
+    else:
+        retry_options = None
     try:
         client_instance = genai.Client(
             api_key=api_key,
             http_options=types.HttpOptions(
                 timeout=120000 if youtube_part is not None else 60000,
                 api_version="v1beta" if youtube_part is not None else None,
-                retry_options=types.HttpRetryOptions(
-                    attempts=2, initial_delay=1, max_delay=3, http_status_codes=[503]
-                ) if youtube_part is not None else None,
+                retry_options=retry_options,
             ),
         )
     except failure_types as exc:
@@ -178,6 +299,7 @@ def _request(
             for index, clip in enumerate(clips):
                 stage = "upload"
                 with upload_wav(clip) as path:
+                    request_counts["upload"] += 1
                     uploaded = client.files.upload(
                         file=path, config=types.UploadFileConfig(mime_type="audio/wav")
                     )
@@ -190,6 +312,7 @@ def _request(
                     if time.monotonic() >= deadline:
                         raise TimeoutError("Audio upload processing timed out")
                     time.sleep(0.5)
+                    request_counts["poll_upload"] += 1
                     uploaded = client.files.get(name=uploaded.name)
                 if uploaded.state == types.FileState.FAILED or not uploaded.uri:
                     raise ValueError("Audio upload is unavailable")
@@ -198,9 +321,9 @@ def _request(
                      types.Part.from_uri(file_uri=uploaded.uri, mime_type="audio/wav")]
                 )
             stage = "generate"
-            instructions = LISTENING_INSTRUCTIONS
+            system_instructions = instructions or LISTENING_INSTRUCTIONS
             if youtube_part is not None:
-                instructions += (
+                system_instructions += (
                     "\nThis input is a public YouTube video, not a locally prepared WAV. "
                     "Judge ONLY audible evidence in the selected interval. Ignore video images, "
                     "titles, captions, thumbnails and visible gear or labels as tone evidence. "
@@ -209,15 +332,16 @@ def _request(
                     "Evidence timestamps must be seconds relative to the selected interval's start."
                 )
             else:
-                instructions += (
+                system_instructions += (
                     "\nAudio is 16 kHz mono: do not infer stereo width or detail above 8 kHz "
                     "from this upload."
                 )
+            request_counts["generate"] += 1
             response = client.models.generate_content(
                 model=model,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    system_instruction=instructions,
+                    system_instruction=system_instructions,
                     response_mime_type="application/json",
                     response_schema=schema,
                 ),
@@ -227,9 +351,7 @@ def _request(
             stage = "validate"
             parsed = schema.model_validate_json(response.text)
             duration = evidence_duration if evidence_duration is not None else clips[0].duration
-            if isinstance(parsed, ListeningResult) and any(
-                item.timestamp > duration for item in parsed.evidence
-            ):
+            if any(item.timestamp > duration for item in getattr(parsed, "evidence", [])):
                 raise ValueError("Evidence timestamp exceeds selected clip duration")
             result["listening"] = parsed.model_dump(mode="json")
         except failure_types as exc:
@@ -238,9 +360,12 @@ def _request(
             logger.warning("%s", reason)
             result["listening_unavailable"] = reason
             result["listening_failure_stage"] = stage
+            if request_attempts == 1:
+                result["failure_info"] = _profile_failure_info(exc)
         finally:
             for name in names:
                 try:
+                    request_counts["delete_upload"] += 1
                     client.files.delete(name=name)
                 except failure_types as exc:
                     warning = f"Remote upload cleanup failed ({type(exc).__name__})"
@@ -268,10 +393,46 @@ def listen_comparison(a: AudioClip, b: AudioClip, focus: str | None = None) -> d
     return _request([a, b], prompt, ComparisonResult)
 
 
-def listen_youtube(
-    url: str, start: float | None = None, end: float | None = None, question: str | None = None
-) -> dict:
-    """Listen via Google's public YouTube input; no local extraction or DSP."""
+TONE_PROFILE_INSTRUCTIONS = """
+Classify only the audible guitar tone using the exact categorical response schema.
+Use the same axis definitions for every clip; do not infer an artist, song, instrument model,
+gear identity, recording chain, or intended target. Ignore titles, captions, images, and filenames.
+If the guitar is not clearly separable from the mix, use uncertain for guitar_dominance and
+uncertain on axes the mix prevents you from judging. Do not use prose similarity or confidence
+as evidence. Evidence timestamps are relative to the selected interval or clip.
+
+Axis definitions:
+- gain: clean through high-gain describes audible saturation, not loudness.
+- brightness: overall guitar spectral balance from dark to bright.
+- bass_level: low, typical, or high amount of low-frequency energy.
+- bass_tightness: loose, neutral, or tight low-frequency response.
+- mids: scooped, neutral, present, or forward midrange.
+- attack: soft, rounded, balanced, or sharp note onset.
+- compression: dynamic, moderate, compressed, or squashed envelope behavior.
+- sustain: short, typical, or long audible note decay.
+- effects presence is absent, possible, present, or uncertain. Prominence is none, subtle,
+  moderate, prominent, or uncertain. Judge reverb, delay, and modulation separately.
+- modulation_type is an audible effect family, not equipment identification. Use none when
+  absent; chorus/flanger/phaser/tremolo only with clear audible evidence, otherwise uncertain.
+"""
+
+_TONE_PROFILE_PROMPT = "Classify this audio using the fixed categorical tone-profile schema."
+
+
+def listen_tone_profile(clip: AudioClip) -> dict:
+    """Analyze an audio clip with the fixed, neutral benchmark response schema."""
+    return _request(
+        [clip],
+        _TONE_PROFILE_PROMPT,
+        ToneProfile,
+        instructions=TONE_PROFILE_INSTRUCTIONS,
+        request_attempts=1,
+    )
+
+
+def _youtube_input(
+    url: str, start: float | None, end: float | None
+) -> tuple[str, float, float, types.Part]:
     parsed_url = urlparse(url.strip())
     host = parsed_url.hostname
     if (
@@ -308,6 +469,37 @@ def listen_youtube(
             end_offset=f"{ending:.9f}".rstrip("0").rstrip(".") + "s",
         ),
     )
+    return canonical, beginning, ending, part
+
+
+def listen_youtube_tone_profile(url: str, start: float, end: float) -> dict:
+    """Analyze one bounded public YouTube interval for the opt-in benchmark."""
+    canonical, beginning, ending, part = _youtube_input(url, start, end)
+    prompt = (
+        f"Classify the public YouTube video's audio from {beginning:g} to {ending:g} seconds "
+        "using the fixed categorical tone-profile schema. Do not use visual or title clues."
+    )
+    return {
+        "source": {"url": canonical, "start_seconds": beginning, "end_seconds": ending},
+        "metrics": None,
+        "metrics_unavailable": "YouTube URL input does not extract a local WAV or compute DSP metrics",
+        **_request(
+            [],
+            prompt,
+            ToneProfile,
+            part,
+            ending - beginning,
+            TONE_PROFILE_INSTRUCTIONS,
+            request_attempts=1,
+        ),
+    }
+
+
+def listen_youtube(
+    url: str, start: float | None = None, end: float | None = None, question: str | None = None
+) -> dict:
+    """Listen via Google's public YouTube input; no local extraction or DSP."""
+    canonical, beginning, ending, part = _youtube_input(url, start, end)
     prompt = (
         f"Listen to the public YouTube video's audio from {beginning:g} to {ending:g} seconds. "
         "Describe the audible guitar tone using the schema, without using visual or title clues."

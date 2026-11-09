@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import random
-import stat
 import subprocess
 import tempfile
 import time
@@ -19,6 +18,7 @@ import numpy as np
 from scripts.make_validation_set import generate
 from tone_listener_mcp.audio_io import AudioClip, load_audio
 from tone_listener_mcp.comparison import loudness_match
+from tone_listener_mcp.config import load_credentials
 from tone_listener_mcp.listener import (
     DEFAULT_MODEL,
     LISTENING_INSTRUCTIONS,
@@ -39,34 +39,6 @@ GAIN_RANK = {
     "clean": 0, "edge-of-breakup": 1, "crunch": 2,
     "overdrive": 3, "distortion": 4, "high-gain": 5,
 }
-
-
-def load_credentials(path: Path) -> None:
-    """Read literal KEY=value entries, never source or execute config text."""
-    info = path.stat()
-    if stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.getuid():
-        raise ValueError("Credential file must be owned by the current user with mode 0600")
-    allowed = {"GEMINI_API_KEY", "TONE_LISTENER_MODEL", "TONE_LISTENER_MAX_SECONDS"}
-    entries = {}
-    for number, line in enumerate(path.read_text().splitlines(), 1):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        line = line.removeprefix("export ")
-        name, separator, value = line.partition("=")
-        name, value = name.strip(), value.strip()
-        if not separator or name not in allowed or name in entries:
-            raise ValueError(f"Invalid or duplicate credential entry on line {number}")
-        if value[:1] in ("'", '"') or value[-1:] in ("'", '"'):
-            if len(value) < 2 or value[-1] != value[0] or value[0] not in ("'", '"'):
-                raise ValueError(f"Unclosed quote in credential entry on line {number}")
-            value = value[1:-1]
-        if any(character in value for character in ("$", "`", "\x00")):
-            raise ValueError(f"Shell expansion is not supported in credential entry on line {number}")
-        entries[name] = value
-    if not entries.get("GEMINI_API_KEY"):
-        raise ValueError("Credential file must contain a nonempty GEMINI_API_KEY")
-    os.environ.update(entries)
 
 
 def prediction(listening: dict | None, axis: str, swapped: bool) -> str | None:

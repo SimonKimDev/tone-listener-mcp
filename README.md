@@ -83,6 +83,79 @@ export GEMINI_API_KEY="your-key"
 
 The server speaks MCP over stdio, not an interactive terminal interface.
 
+## Local renderer foundation
+
+The local tone workbench is being introduced in separate layers. This foundation
+provides tone-profile listening, versioned project/chain models, the Soundshed
+adapter and a sandboxed renderer; the web launcher and UI are not included yet.
+The existing five stdio MCP tools are unchanged.
+
+The actual preview requires macOS, the installed **Soundshed Guitar 1.7.3**
+VST3, and a local build of the small Steinberg VST3 SDK host. Download the
+Steinberg VST3 SDK separately, review its license, and keep it outside this
+repository. From the repository root, build:
+
+```sh
+python3 -m pip install -e '.[dev]'
+cmake -S native/vst3-renderer -B native/vst3-renderer/build \
+  -DVST3_SDK_ROOT=/absolute/path/to/vst3sdk -DCMAKE_BUILD_TYPE=Release
+cmake --build native/vst3-renderer/build --target tone-vst3-renderer
+```
+
+Preview jobs use the installed plugin in a sandbox that denies reads of profile
+databases/settings, home-directory writes and network access, while allowing
+the adapter-resolved NAM/IR resource files. The adapter reads resource records
+read-only and builds one explicit single-preset host state; it does not capture
+user mixer settings. At startup, a mandatory actual-DSP canary checks +6 dB
+utility gain (tolerance +/-0.1 dB), bypass-to-dry, each NAM/IR contribution and
+order changes. Preview and export verification require the validated worker
+and plugin hashes. Preset exports reference the existing local NAM/IR library
+and do not bundle or redistribute those assets.
+
+Playback uses bundled, separately licensed dry DI samples. Riff 1/2 (the defaults,
+chordal rhythm parts) are CC0 recordings from
+[dry-guitar-samples](https://github.com/danieljfarrell/dry-guitar-samples).
+Lead 1/2 (an upper-register lead line and a single-note pedal riff) are
+excerpts of the **Guitar-TECHS** dataset by Hegel Pedroza, Wallace Abreu,
+Ryan M. Corey and Iran R. Roman ([Zenodo record 14963133](https://zenodo.org/records/14963133)),
+licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): Player 3
+direct-input excerpts `directinput_08.wav` and `directinput_10.wav`, one channel
+of the identical dual-mono pair, trimmed and resampled from 48 to 44.1 kHz
+without normalization or gain (see
+`src/tone_listener_mcp/workbench/assets/di/provenance.json` and
+`scripts/prepare_lead_dis.py`). Cite: Pedroza, Hegel, et al. "Guitar-TECHS: An
+Electric Guitar Dataset Covering Techniques, Musical Excerpts, Chords and Scales
+Using a Diverse Array of Hardware." ICASSP 2025, IEEE,
+doi:10.1109/ICASSP49660.2025.10887996.
+
+Previews are float WAVs, preserving DSP levels without PCM clipping. Up to ten
+seconds of silence are processed for effect tails; a tail that is still audible
+at that limit fails explicitly instead of saving truncated audio.
+
+Offline checks:
+
+```sh
+ruff check .
+python3 -m pytest -q -p no:cacheprovider
+```
+
+Opt-in **installed-engine** checks (no Gemini calls):
+
+```sh
+TONE_WORKBENCH_NATIVE_TESTS=1 pytest -q -m native_integration
+# Or retain variant WAVs, a preset, hashes and the exact measurements:
+python3 scripts/verify_workbench_renderer.py --live --output /private/tmp/tone-render-report
+```
+
+These checks restore a parsed exported preset into a fresh installed engine
+instance and compare actual audio. They do **not** exercise the standalone
+Soundshed app's ZIP importer UI or modify its preset library. Soundshed 1.7.3
+ignores the legacy `mixer.masterGain` host-state field in this test; the explicit
+global output gain and measured equal-power stereo pan law define preview level.
+Standalone import remains **not verified**: changing `HOME` does not redirect
+JUCE's native shared profile location. A protected native-import acceptance
+environment is still required; do not launch or import into a live user profile.
+
 ## Register with an MCP client
 
 Generic `mcpServers` configuration (replace the absolute path):

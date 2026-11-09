@@ -5,6 +5,8 @@ __pycache__/
 venv/
 dist/
 build/
+node_modules/
+src/tone_listener_mcp/workbench/static/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -18,3 +20,4 @@ build/
 *.mp3
 *.m4a
 !tests/fixtures/**
+!src/tone_listener_mcp/workbench/assets/di/*.wav
