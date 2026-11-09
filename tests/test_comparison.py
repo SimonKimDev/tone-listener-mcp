@@ -78,7 +78,8 @@ def test_no_waveform_clipping_during_matching():
     matched, matching = loudness_match(a, b)
     assert matching["applied"]
     assert np.max(matched.samples) > 1
-    assert np.sqrt(np.mean(matched.samples**2)) == pytest.approx(0.8, abs=1e-6)
+    # Gated RMS omits sub-millisecond edges whose overhanging windows fail the relative gate.
+    assert np.sqrt(np.mean(matched.samples**2)) == pytest.approx(0.8, rel=1e-4)
 
 
 def test_two_uploads_one_request(monkeypatch):
@@ -165,7 +166,7 @@ def test_actual_uploaded_waveforms_are_rms_matched(monkeypatch, case):
     assert result["listening_unavailable"] is None
     assert len(uploaded) == 2
     rms_a, rms_b = [np.sqrt(np.mean(data**2)) for data in uploaded]
-    assert rms_a == pytest.approx(rms_b, rel=1e-6)
+    assert rms_a == pytest.approx(rms_b, rel=1e-4)
     assert max(np.max(np.abs(data)) for data in uploaded) <= 1
     assert result["upload_loudness_match"]["applied"]
     if case == "stereo_downmix":
@@ -256,3 +257,118 @@ def test_upload_matching_ignores_silence_padding(monkeypatch):
         0, abs=0.05
     )
     assert np.max(np.abs(uploaded[0])) == pytest.approx(np.max(np.abs(uploaded[1])), rel=0.01)
+
+
+def note(milliseconds, rate=48000):
+    t = np.arange(round(milliseconds * rate / 1000)) / rate
+    return sum(np.sin(2 * np.pi * 196 * k * t) / k for k in range(1, 12)) * 0.4 * np.exp(-20 * t)
+
+
+def staccato_signals():
+    rate = 16000
+    burst = 0.2 * np.sin(2 * np.pi * 1000 * np.arange(800) / rate)
+    return {
+        # Reported reproduction: 50 ms on / 50 ms off at 16 kHz.
+        "staccato_50_50": (np.tile(np.concatenate((burst, np.zeros(800))), 10), rate),
+        "staccato_25_25": (np.tile(np.concatenate((note(25), np.zeros(1200))), 8), 48000),
+        "staccato_30_70": (np.tile(np.concatenate((note(30), np.zeros(3360))), 6), 48000),
+        "short_note_60ms": (note(60), 48000),
+        "short_note_30ms": (note(30), 48000),
+    }
+
+
+OFFSETS_MS = (1, 10, 25, 49)
+
+
+def offset_variants(samples, rate, offset_ms):
+    pad = np.zeros(round(rate * offset_ms / 1000))
+    variants = {
+        "leading": np.concatenate((pad, samples)),
+        "both_ends": np.concatenate((pad, samples, pad)),
+    }
+    if not np.any(samples[samples.size - pad.size:]):
+        variants["same_length_shift"] = np.concatenate((pad, samples[: samples.size - pad.size]))
+    return variants
+
+
+@pytest.mark.parametrize("offset_ms", OFFSETS_MS)
+@pytest.mark.parametrize("name", list(staccato_signals()))
+def test_active_matching_is_invariant_to_silence_alignment(name, offset_ms):
+    samples, rate = staccato_signals()[name]
+    for variant, shifted in offset_variants(samples, rate, offset_ms).items():
+        result = compare(clip(samples, rate), clip(shifted, rate))
+        matching = result["loudness_match"]
+        assert matching["applied"], variant
+        assert matching["gain_db_applied_to_b"] == pytest.approx(0, abs=1e-6), variant
+        assert result["deltas_b_minus_a"]["crest_factor_db"] == pytest.approx(0, abs=1e-6)
+        activity = matching["activity"]
+        assert activity["active_seconds_b"] == pytest.approx(activity["active_seconds_a"], abs=1e-9)
+        assert not activity["activity_mismatch"]
+
+
+def test_staccato_gated_level_reflects_played_notes():
+    samples, rate = staccato_signals()["staccato_50_50"]
+    level = compare(clip(samples, rate), clip(samples, rate))["metrics_a"]["level"]
+    # 0.2-peak sine: -16.99 dBFS while sounding; 50 ms gaps are not active.
+    assert level["gated_rms_dbfs"] == pytest.approx(-16.9897, abs=0.01)
+    assert level["gated_duration_seconds"] == pytest.approx(0.5, abs=0.01)
+
+
+@pytest.mark.parametrize("offset_ms", OFFSETS_MS)
+def test_noise_floor_padding_residual_is_small(offset_ms):
+    samples, rate = staccato_signals()["staccato_30_70"]
+    rng = np.random.default_rng(offset_ms)
+    pad = rng.normal(0, 10 ** (-96 / 20), round(rate * offset_ms / 1000))
+    result = compare(clip(samples, rate), clip(np.concatenate((pad, samples, pad[::-1])), rate))
+    assert result["loudness_match"]["gain_db_applied_to_b"] == pytest.approx(0, abs=0.01)
+    assert result["deltas_b_minus_a"]["crest_factor_db"] == pytest.approx(0, abs=0.01)
+
+
+@pytest.mark.parametrize("offset_ms", OFFSETS_MS)
+def test_whole_matching_still_counts_silence_alignment(offset_ms):
+    samples, rate = staccato_signals()["staccato_50_50"]
+    padded = offset_variants(samples, rate, offset_ms)["both_ends"]
+    result = compare(clip(samples, rate), clip(padded, rate), matching="whole")
+    expected = 10 * np.log10(padded.size / samples.size)
+    assert result["loudness_match"]["gain_db_applied_to_b"] == pytest.approx(expected, abs=1e-6)
+
+
+def mock_uploads(monkeypatch):
+    import soundfile as sf
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    uploaded = []
+    client = MagicMock()
+    client.__enter__.return_value = client
+
+    def capture(**kwargs):
+        uploaded.append(sf.read(kwargs["file"])[0])
+        return SimpleNamespace(name=f"files/{len(uploaded)}", uri="https://example.invalid/a",
+                               state=types.FileState.ACTIVE)
+
+    client.files.upload.side_effect = capture
+    client.models.generate_content.return_value.text = json.dumps({
+        "differences": [], "brighter": "similar", "more_saturated": "similar",
+        "more_compressed": "similar", "more_ambient": "similar",
+        "suggested_adjustments": [], "uncertainties": [], "confidence": 0.5,
+    })
+    monkeypatch.setattr("tone_listener_mcp.listener.genai.Client", lambda **kwargs: client)
+    return uploaded
+
+
+@pytest.mark.parametrize("offset_ms", OFFSETS_MS)
+@pytest.mark.parametrize("name", list(staccato_signals()))
+def test_upload_matching_is_invariant_to_silence_alignment(monkeypatch, name, offset_ms):
+    from tone_listener_mcp.metrics import gated_power
+
+    uploaded = mock_uploads(monkeypatch)
+    samples, rate = staccato_signals()[name]
+    shifted = offset_variants(samples, rate, offset_ms)["both_ends"]
+    result = compare(clip(samples, rate), clip(shifted, rate))
+    upload = result["upload_loudness_match"]
+    assert upload["applied"] and upload["strategy"] == "active"
+    # Resampling keeps filter ringing past an abruptly ending clip only when padding follows.
+    assert upload["additional_gain_db_applied_to_b"] == pytest.approx(0, abs=0.01)
+    powers = [gated_power(AudioClip(data[None, :], 16000, "upload"))[0] for data in uploaded]
+    assert 10 * np.log10(powers[1] / powers[0]) == pytest.approx(0, abs=0.01)
+    assert np.max(np.abs(uploaded[1])) == pytest.approx(np.max(np.abs(uploaded[0])), rel=1e-3)

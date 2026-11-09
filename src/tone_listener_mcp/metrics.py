@@ -22,8 +22,9 @@ WINDOW_SECONDS = 0.05
 GATE_ABSOLUTE_DBFS = -70.0
 GATE_RELATIVE_DB = -20.0
 GATING_METHOD = (
-    "Unweighted 50 ms windows above -70 dBFS and within 20 dB of their mean "
-    "(BS.1770-style two-stage gate; not LUFS)"
+    "Unweighted 50 ms windows at every sample offset, gated above -70 dBFS and within "
+    "20 dB of their mean (BS.1770-style two-stage gate; not LUFS); mean power of samples "
+    "whose every containing window passes"
 )
 
 
@@ -34,23 +35,32 @@ def power_db(power: float) -> float | None:
 def gated_power(clip: AudioClip) -> tuple[float, float]:
     """Return mean power of the active (gated) region and the gated duration in seconds.
 
-    Silence padding and decaying tails below the gate do not change this power, so
-    loudness matching on it compares the played portions of two clips.
+    Windows are evaluated at every sample offset, with the clip zero-extended so windows
+    overhanging its edges match windows over digital-silence padding. A sample is active
+    when every window containing it passes the gate, so silence padding, its alignment and
+    sub-gate tails do not change this power, while gaps shorter than a window stay active.
     """
-    samples = clip.samples.astype(np.float64)
-    frames = samples.shape[1]
+    frame_power = np.mean(np.square(clip.samples, dtype=np.float64), axis=0)
+    frames = frame_power.size
     window = max(1, round(clip.sample_rate * WINDOW_SECONDS))
-    starts = np.arange(0, frames, window)
-    sums = np.add.reduceat(np.sum(samples**2, axis=0), starts)
-    counts = np.diff(np.append(starts, frames)) * samples.shape[0]
-    powers = sums / counts
-    gate = powers > 10 ** (GATE_ABSOLUTE_DBFS / 10)
+    cumulative = np.concatenate(([0.0], np.cumsum(frame_power)))
+    # Window t covers frames t - window + 1 .. t, for t in 0 .. frames + window - 2.
+    ends = np.arange(frames + window - 1)
+    window_powers = np.maximum(
+        cumulative[np.minimum(ends + 1, frames)] - cumulative[np.maximum(ends - window + 1, 0)],
+        0.0,
+    ) / window
+    gate = window_powers > 10 ** (GATE_ABSOLUTE_DBFS / 10)
     if not gate.any():
         return 0.0, 0.0
-    ungated_mean = np.sum(sums[gate]) / np.sum(counts[gate])
-    gate &= powers >= ungated_mean * 10 ** (GATE_RELATIVE_DB / 10)
-    gated_frames = np.sum(counts[gate]) / samples.shape[0]
-    return float(np.sum(sums[gate]) / np.sum(counts[gate])), float(gated_frames / clip.sample_rate)
+    gate &= window_powers >= np.mean(window_powers[gate]) * 10 ** (GATE_RELATIVE_DB / 10)
+    failed = np.concatenate(([0], np.cumsum(~gate)))
+    # Frame k lies in windows k .. k + window - 1.
+    active = failed[window:] == failed[:frames]
+    if not active.any():
+        # Sparse impulses can pass only in windows shared with each other.
+        return float(np.mean(window_powers[gate])), 0.0
+    return float(np.mean(frame_power[active])), float(np.count_nonzero(active) / clip.sample_rate)
 
 
 def level_metrics(clip: AudioClip) -> dict:

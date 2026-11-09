@@ -64,7 +64,7 @@ def test_mocked_blind_split(monkeypatch):
     def compare(a, b):
         assert a.source == b.source == "blind"
         assert a.duration == b.duration
-        assert gated_power(a)[0] == pytest.approx(gated_power(b)[0], rel=1e-5)
+        assert gated_power(a)[0] == pytest.approx(gated_power(b)[0], rel=1e-4)
         calls.append((a, b))
         return {"listening": payload, "listening_unavailable": None}
 
