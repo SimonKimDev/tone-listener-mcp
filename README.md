@@ -463,8 +463,10 @@ the stdio integration test spawns the real server and exercises all five tools.
 GitHub Actions runs lint and tests on Python 3.11 and 3.12 for every pull
 request (including forks), pushes to `main` and manual dispatch; the `ci-passed`
 job is the required status check for merging into `main`. The opt-in `scripts.eval_listening` harness runs blinded, swapped A/B
-judgments with separate tuning/held-out sets; see the validation guide for
-request budgets and credential loading. Live Gemini checks require a key and
+judgments with separate tuning/held-out sets, or real recordings listed in a
+manifest with whole performances held out (`--manifest`, scored per task with
+abstention, order-consistency and visual-bias reporting); see the validation guide
+for the manifest format, request budgets and credential loading. Live Gemini checks require a key and
 incur API usage; skipped runs do not measure listening accuracy.
 
 ## License
