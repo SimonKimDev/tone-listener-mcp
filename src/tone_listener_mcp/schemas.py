@@ -16,7 +16,13 @@ BandId = Literal[
     "below_80", "80_250", "250_800", "800_2000", "2000_5000", "5000_8000", "above_8000"
 ]
 FailureStage = Literal[
-    "prepare_upload", "create_client", "upload", "upload_processing", "generate", "validate"
+    "prepare_upload", "queue", "create_client", "upload", "upload_processing", "generate",
+    "validate",
+]
+FailureCategory = Literal[
+    "not_configured", "audio_preparation", "authentication", "permission", "model_unavailable",
+    "invalid_request", "quota", "capacity", "provider_error", "deadline", "busy", "network",
+    "upload_failed", "invalid_response", "local_io",
 ]
 
 
@@ -93,11 +99,52 @@ class UploadLoudnessMatch(Response):
     reason: str | None
 
 
+class Failure(Response):
+    category: FailureCategory
+    http_status: int | None = Field(description="Provider HTTP status when one was returned")
+    retryable: bool
+    suggestion: str
+
+
+class Usage(Response):
+    prompt_token_count: int | None
+    candidates_token_count: int | None
+    thoughts_token_count: int | None
+    cached_content_token_count: int | None
+    total_token_count: int | None
+
+
+class Preprocessing(Response):
+    label: Literal["A", "B", "C"]
+    original_sample_rate: int
+    original_channels: int
+    duration_seconds: float
+    upload_sample_rate: int
+    upload_channels: int
+
+
+class Diagnostics(Response):
+    elapsed_seconds: float
+    deadline_seconds: float
+    max_concurrent_requests: int
+    prompt_version: str
+    schema_version: str
+    cache: Literal["hit", "miss", "disabled", "not_used"] = Field(
+        description="not_used when no provider request was attempted"
+    )
+    usage: Usage | None = Field(description="Provider token usage; null on cache-less failures")
+    preprocessing: list[Preprocessing]
+
+
 class ListeningFields(Response):
     model: str
     listening_unavailable: str | None = Field(
         description="Why listening is absent; null when listening succeeded"
     )
+    failure: Failure | None = Field(
+        description="Machine-readable failure category and recovery hint; never provider text"
+    )
+    diagnostics: Diagnostics
     cleanup_warnings: list[str]
     upload_gain_db: float
     upload_loudness_match: UploadLoudnessMatch | None

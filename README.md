@@ -66,6 +66,11 @@ read them. Convert M4A/AAC to WAV with your DAW or another converter first.
 | `GEMINI_API_KEY` | Unset | Enable Gemini uploads and listening; omit for local-only operation |
 | `TONE_LISTENER_MODEL` | `gemini-3.8-flash` | Audio-capable Gemini model available to your account |
 | `TONE_LISTENER_MAX_SECONDS` | `600` | Maximum selected duration; positive finite seconds |
+| `TONE_LISTENER_REQUEST_DEADLINE_SECONDS` | `180` | Overall budget for queue, upload, processing and generation (>= 1) |
+| `TONE_LISTENER_MAX_CONCURRENT_REQUESTS` | `2` | Gemini requests run at once per server process; others wait within the deadline |
+| `TONE_LISTENER_CACHE_ENTRIES` | `64` | Successful listening results kept in memory; `0` disables the cache |
+
+Invalid values for these settings make the listening tools return an error naming the variable.
 
 `.env.example` is a reference, **not automatically loaded**. Export variables in
 your shell or set them in your MCP client's environment configuration. Never
@@ -262,9 +267,66 @@ For local-file analysis, no key gives an explicit local-only response:
 
 This excerpt omits the returned local `metrics`. Provider errors and invalid
 model responses similarly preserve metrics, with a sanitized failure reason
-and `listening_failure_stage` (preparation, client creation, upload, processing,
+and `listening_failure_stage` (preparation, queue, client creation, upload, processing,
 generation or validation) to distinguish actionable failures without exposing
 API headers or response bodies.
+
+#### Failures, budgets, diagnostics and caching
+
+`failure` is `null` on success, otherwise `{category, http_status, retryable, suggestion}`.
+Categories: `not_configured`, `audio_preparation`, `authentication` (401), `permission` (403),
+`model_unavailable` (404), `invalid_request` (400), `quota` (429), `capacity` (5xx),
+`provider_error`, `network`, `deadline`, `busy`, `upload_failed`, `invalid_response` and
+`local_io`. Suggestions are fixed text; provider messages are never returned.
+
+One deadline (`TONE_LISTENER_REQUEST_DEADLINE_SECONDS`) bounds the total elapsed time of
+waiting for an inference slot, each upload, upload processing (also capped at 30 s) and
+generation. It is enforced on every socket connect, TLS handshake, read and write of every
+provider request, including the YouTube 503 retry, so a slowly streamed response or a series of
+individually quick requests still stops at the deadline with category `deadline`. When a host
+resolves to several addresses, they are tried in order and share that one deadline, rather than
+each getting a full connect timeout. A listening result is never accepted after the deadline,
+whether it comes from the provider or the cache: a provider response that completes late is
+neither returned nor cached, and a cache hit found after the budget is spent (for example by
+slow audio preparation) fails with `deadline` at stage `queue`, exactly like a miss, while
+the cached entry stays valid for later requests. The YouTube retry (one, after 1 s, on a 503
+or a transient connect/timeout error) only covers the generate request, and only happens if at
+least 1 s of budget would remain; uploads, upload status checks and deletes are not retried.
+Remote upload cleanup always runs afterwards, even past the deadline, with its own 10 s total
+budget per file, so cleanup can extend a call by at most 10 s per uploaded file (including
+returning a result that was accepted before the deadline).
+The deadline is enforced by wrapping the connection pools of a per-request httpx2 client passed
+to google-genai, which relies on private httpx2/httpcore2 internals (`_transport`, `_mounts`,
+`_pool._network_backend`). If those change in a new httpx2 release, listening fails closed with
+category `local_io` at stage `create_client` instead of running without a deadline.
+Not covered by the deadline:
+- DNS resolution, which cannot be interrupted.
+- The SDK's internal resumable-upload backoff (only used when the server omits the upload
+  status), whose sleep can delay the `deadline` failure until the next socket operation.
+- Within a very slowly draining upload, the deadline is rechecked every 64 KiB rather than on
+  every send.
+
+When all `TONE_LISTENER_MAX_CONCURRENT_REQUESTS` slots stay busy until the deadline, the
+result fails with category `busy` at stage `queue` without uploading anything. A slot is held
+until the request, including its cleanup, has fully finished, so no provider request outlives
+the call.
+
+Every listening result includes `diagnostics`: `elapsed_seconds`, `deadline_seconds`,
+`max_concurrent_requests`, `prompt_version`, `schema_version` (response schema name plus a
+hash of its JSON schema), `cache` (`hit`, `miss`, `disabled` or `not_used` when no request
+was attempted; a `hit` with a `deadline` failure means a matching cached result was found but
+not returned because the deadline had passed), provider token `usage` when reported, and `preprocessing` per uploaded clip
+(original sample rate/channels/duration and the 16 kHz mono upload format).
+
+Successful, validated results are cached in memory for the life of the server process.
+The key covers the model, prompt version, schema version, system instructions, prompt
+(including your question/focus), YouTube URL and interval, and the exact prepared audio
+samples, so a changed file, interval, matching strategy or question is a new request.
+A cache hit makes no API call and reports the original call's `usage`. Failures are never
+cached. Restart the server or set `TONE_LISTENER_CACHE_ENTRIES=0` to force fresh listening.
+
+Clients that send an MCP progress token receive progress notifications for audio
+preparation, each upload, generation and validation (or "Served from cache").
 **Confidence is model self-assessment, not calibrated accuracy.** Live listening
 quality requires evaluation against recordings with known changes.
 

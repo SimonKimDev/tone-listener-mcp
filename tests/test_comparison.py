@@ -136,7 +136,7 @@ def test_b_upload_failure_removes_a(monkeypatch):
     result = compare(clip(np.ones(1000) * 0.1), clip(np.ones(1000) * 0.05))
     assert result["listening_unavailable"]
     assert result["metrics_a"]["level"]["rms_dbfs"] is not None
-    client.files.delete.assert_called_once_with(name="files/A")
+    assert [c.kwargs["name"] for c in client.files.delete.call_args_list] == ["files/A"]
     client.models.generate_content.assert_not_called()
 
 
