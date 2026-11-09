@@ -222,7 +222,8 @@ def _read_manifest(path: Path) -> dict:
     # Infinity and overflowing literals such as 1e999 are rejected before any request.
     try:
         return json.loads(
-            path.read_text(), parse_float=_finite_float, parse_constant=_reject_constant
+            path.read_text(encoding="utf-8"),
+            parse_float=_finite_float, parse_constant=_reject_constant,
         )
     except ManifestError:
         raise
@@ -609,7 +610,7 @@ def reserve_report(destination: Path, parser: argparse.ArgumentParser):
         parser.error("Refusing to overwrite an existing evaluation report")
     except OSError as exc:
         parser.error(f"Report destination is not writable: {exc}")
-    report_file = os.fdopen(descriptor, "w")
+    report_file = os.fdopen(descriptor, "w", encoding="utf-8")
     try:
         report_file.write(json.dumps({
             "status": "running",

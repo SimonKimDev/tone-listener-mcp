@@ -1,6 +1,8 @@
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -540,27 +542,67 @@ def test_unusable_report_destinations_fail_before_any_request(tmp_path, monkeypa
     calls = listening_counter(monkeypatch)
     blocker = tmp_path / "file"
     blocker.write_text("not a directory")
+    existing = tmp_path / "existing.json"
+    existing.write_text("keep")
+    denied = tmp_path / "denied" / "report.json"
+    real_open = os.open
+
+    def deny(file, *args, **kwargs):
+        # Permissions are platform-specific, so simulate a refused create at the open seam.
+        if Path(file) == denied.resolve():
+            raise PermissionError(13, "Permission denied", str(file))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", deny)
+    for destination, message in (
+        (blocker / "report.json", "not writable"),
+        (denied, "not writable"),
+        (existing, "Refusing to overwrite"),
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            run_main(monkeypatch, "--manifest", path, "--repeats", 1, "--pause", 0,
+                     "--report", destination)
+        assert exit_info.value.code == 2
+        assert message in capsys.readouterr().err
+    assert calls == []
+    assert existing.read_text() == "keep"
+    assert not denied.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs POSIX directory permissions enforced for a non-root user",
+)
+def test_read_only_report_directory_fails_before_any_request(tmp_path, monkeypatch, capsys):
+    path = build_manifest(tmp_path / "data")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls = listening_counter(monkeypatch)
     locked = tmp_path / "locked"
     locked.mkdir()
     locked.chmod(0o500)
-    existing = tmp_path / "existing.json"
-    existing.write_text("keep")
     try:
-        for destination, message in (
-            (blocker / "report.json", "not writable"),
-            (locked / "report.json", "not writable"),
-            (existing, "Refusing to overwrite"),
-        ):
-            with pytest.raises(SystemExit) as exit_info:
-                run_main(monkeypatch, "--manifest", path, "--repeats", 1, "--pause", 0,
-                         "--report", destination)
-            assert exit_info.value.code == 2
-            assert message in capsys.readouterr().err
+        with pytest.raises(SystemExit) as exit_info:
+            run_main(monkeypatch, "--manifest", path, "--repeats", 1, "--pause", 0,
+                     "--report", locked / "report.json")
     finally:
         locked.chmod(0o700)
+    assert exit_info.value.code == 2
+    assert "not writable" in capsys.readouterr().err
     assert calls == []
-    assert existing.read_text() == "keep"
     assert list(locked.iterdir()) == []
+
+
+def test_manifest_is_read_as_utf8_on_every_platform(tmp_path):
+    from scripts.eval_listening import ManifestError, load_manifest
+
+    path = build_manifest(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["description"] = "Télécaster ﾄｰﾝ"
+    path.write_bytes(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    assert load_manifest(path)["description"] == "Télécaster ﾄｰﾝ"
+    path.write_bytes(path.read_bytes().replace("é".encode(), b"\xe9", 1))
+    with pytest.raises(ManifestError, match="valid JSON"):
+        load_manifest(path)
 
 
 def test_reserved_report_is_removed_on_validation_error_and_replaced_on_success(
