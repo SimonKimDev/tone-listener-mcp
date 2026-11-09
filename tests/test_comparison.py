@@ -42,6 +42,27 @@ def test_high_frequency_boost_direction():
     assert difference == pytest.approx(10 * np.log10(0.8 / 0.5), abs=0.05)
     assert any("cut" in hint and "2-5 kHz" in hint for hint in result["eq_direction_hints"])
     assert result["deltas_b_minus_a"]["centroid_hz"] > 0
+    bands = result["metrics_a"]["spectrum"]["bands"]
+    assert bands["above_8000"]["effective_range_hz"] == [8000, 24000]
+
+
+def test_relative_bands_are_not_compared_across_nyquist_frequencies():
+    a_rate, b_rate = 8000, 16000
+    a = clip(np.sin(2 * np.pi * 3000 * np.arange(a_rate) / a_rate), a_rate)
+    b = clip(np.sin(2 * np.pi * 4600 * np.arange(b_rate) / b_rate), b_rate)
+
+    result = compare(a, b)
+
+    deltas = result["deltas_b_minus_a"]["relative_band_db"]
+    assert deltas["2000_5000"] is None
+    assert all(value is None for value in deltas.values())
+    assert result["eq_direction_hints"] == []
+    assert any("Nyquist" in caution for caution in result["cautions"])
+    a_bands = result["metrics_a"]["spectrum"]["bands"]
+    b_bands = result["matched_metrics_b"]["spectrum"]["bands"]
+    assert a_bands["2000_5000"]["effective_range_hz"] == [2000, 4000]
+    assert b_bands["2000_5000"]["effective_range_hz"] == [2000, 5000]
+    assert a_bands["5000_8000"]["effective_range_hz"] is None
 
 
 def test_silence_comparison():
