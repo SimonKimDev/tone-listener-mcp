@@ -120,15 +120,26 @@ def build_dataset(
     for name, source in performances.items():
         seed = None if source else int(hashlib.sha256(name.encode()).hexdigest()[:8], 16)
         paths = generate(output / name, seconds, source, seed, held_out=name in held_out)
-        reference = load_audio(str(paths["reference"]))
-        rate = reference.sample_rate
+        rendered = {
+            variant: sf.read(path, dtype="float64", always_2d=True)
+            for variant, path in paths.items()
+        }
+        frames = max(samples.shape[0] for samples, _ in rendered.values())
+        # The reverb tail makes that render longer; equal lengths keep duration from revealing
+        # the ambience answer. Only the silence-padding control differs in length on purpose.
+        for variant, (samples, rate) in rendered.items():
+            if samples.shape[0] < frames:
+                sf.write(paths[variant], np.pad(samples, ((0, frames - samples.shape[0]), (0, 0))),
+                         rate, subtype="FLOAT")
+        reference, rate = rendered["reference"]
+        reference = np.pad(reference, ((0, frames - reference.shape[0]), (0, 0)))
         padding = (
-            (0, 0), (round(LEADING_SILENCE_SECONDS * rate), round(TRAILING_SILENCE_SECONDS * rate))
+            (round(LEADING_SILENCE_SECONDS * rate), round(TRAILING_SILENCE_SECONDS * rate)), (0, 0)
         )
         paths["padded"] = output / name / "padded.wav"
         if paths["padded"].exists():
             raise FileExistsError(f"Refusing to overwrite validation recording: {paths['padded']}")
-        sf.write(paths["padded"], np.pad(reference.samples, padding).T, rate, subtype="FLOAT")
+        sf.write(paths["padded"], np.pad(reference, padding), rate, subtype="FLOAT")
         for variant, path in paths.items():
             clips[f"{name}/{variant}"] = {
                 "path": path.relative_to(output).as_posix(),

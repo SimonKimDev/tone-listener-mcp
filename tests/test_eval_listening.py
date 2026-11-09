@@ -233,10 +233,11 @@ def test_manifest_scoring_by_task_order_abstention_and_bias():
     assert manifest_prediction({"brighter": "A"}, "brighter", True) == "B"
     assert manifest_prediction({"brighter": "B"}, "brighter", False) == "B"
 
-    def row(comparison, task, expected, prediction, swapped=False, repeat=0, bias=None):
+    def row(comparison, task, expected, prediction, swapped=False, repeat=0, bias=None,
+            axis="brighter", b="take1/reference"):
         return {"comparison": comparison, "task": task, "expected": expected,
                 "prediction": prediction, "swapped": swapped, "repeat": repeat,
-                "performance": "take1", "bias_group": bias}
+                "performance": "take1", "bias_group": bias, "axis": axis, "b": b}
 
     result = score_manifest([
         row("eq", "eq", "B", "B"), row("eq", "eq", "B", "B", swapped=True),
@@ -302,3 +303,125 @@ def test_manifest_skip_reports_budget_without_calls(tmp_path):
     assert report["manifest"]["sha256"]
     with pytest.raises(ValueError, match="repeats"):
         evaluate(["tuning"], repeats=0, manifest_path=tmp_path / "manifest.json")
+
+
+def test_bias_groups_only_compare_answers_to_the_same_question():
+    from scripts.eval_listening import score_manifest
+
+    def row(comparison, prediction, axis="brighter", b="take1/reference", repeat=0):
+        return {"comparison": comparison, "task": "visual", "expected": "similar",
+                "prediction": prediction, "swapped": False, "repeat": repeat,
+                "performance": "take1", "bias_group": "cover", "axis": axis, "b": b}
+
+    result = score_manifest([
+        row("yt1-bright", "similar"), row("yt2-bright", "similar"),
+        # Different questions in the same group: never compared with each other.
+        row("yt1-drive", "B", axis="more_saturated"),
+        row("yt2-other", "A", b="take1/eq_dark"),
+        row("yt1-bright-r1", "similar", repeat=1), row("yt2-bright-r1", "A", repeat=1),
+    ])
+    assert (result["bias_groups_consistent"], result["bias_groups"]) == (1, 2)
+
+
+def test_dataset_pairs_have_equal_length_except_silence_control(tmp_path):
+    import soundfile as sf
+
+    from scripts.eval_listening import load_manifest
+
+    manifest = load_manifest(build_manifest(tmp_path))
+    frames = {name: sf.info(clip["path"]).frames for name, clip in manifest["clips"].items()}
+    for comparison in manifest["comparisons"]:
+        a, b = frames[comparison["a"]], frames[comparison["b"]]
+        if comparison["task"] == "silence_control":
+            assert b - a == 3 * 48000
+        else:
+            assert a == b, comparison["id"]
+    reverb = load_audio(manifest["clips"]["take1/reverb"]["path"])
+    reference = load_audio(manifest["clips"]["take1/reference"]["path"])
+    assert reference.duration == pytest.approx(1.25, abs=1e-3)
+    # Padding is silent: the reference's appended tail adds no energy.
+    assert not reference.samples[:, 48000:].any()
+    assert reverb.samples[:, 48000:].any()
+
+
+def corrupt(path):
+    path.write_bytes(b"not audio")
+
+
+def three_channels(path):
+    import soundfile as sf
+
+    sf.write(path, np.zeros((4800, 3)), 48000)
+
+
+@pytest.mark.parametrize(("change", "message"), [
+    (lambda data, root: data["clips"]["take1/eq_bright"].update(start="1"), "number of seconds"),
+    (lambda data, root: data["clips"]["take1/eq_bright"].update(end=True), "number of seconds"),
+    (lambda data, root: data["clips"]["take1/eq_bright"].update(start=0.5, end=0.2), "greater"),
+    (lambda data, root: data["clips"]["take1/eq_bright"].update(start=5), "no audio"),
+    (lambda data, root: corrupt(root / "take1" / "drive_heavy.wav"), "Cannot decode"),
+    (lambda data, root: three_channels(root / "take1" / "reverb.wav"), "mono and stereo"),
+])
+def test_manifest_clips_are_checked_before_any_request(tmp_path, monkeypatch, change, message):
+    from scripts.eval_listening import ManifestError
+
+    path = build_manifest(tmp_path)
+    edit_manifest(path, lambda data: change(data, tmp_path))
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no request may be made for an invalid manifest")
+
+    monkeypatch.setattr("scripts.eval_listening.listen_comparison", forbidden)
+    with pytest.raises(ManifestError, match=message):
+        evaluate(["tuning"], repeats=1, pause=0, manifest_path=path)
+
+
+def test_manifest_preflight_rejects_over_length_clips_and_skips_other_splits(
+    tmp_path, monkeypatch
+):
+    from scripts.eval_listening import ManifestError
+
+    path = build_manifest(tmp_path)
+    corrupt(tmp_path / "take2" / "reference.wav")
+    # Only the selected split is decoded; a broken held-out clip does not block tuning.
+    assert evaluate(["tuning"], repeats=1, manifest_path=path)["status"] == "skipped"
+    with pytest.raises(ManifestError, match="take2/reference"):
+        evaluate(["held_out"], repeats=1, manifest_path=path)
+    monkeypatch.setenv("TONE_LISTENER_MAX_SECONDS", "0.5")
+    with pytest.raises(ManifestError, match="exceeds 0.5 seconds"):
+        evaluate(["tuning"], repeats=1, manifest_path=path)
+
+
+def test_mid_run_failure_writes_partial_error_report(tmp_path, monkeypatch):
+    from scripts import eval_listening
+
+    path = build_manifest(tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls = []
+
+    def compare(a, b):
+        calls.append(1)
+        if len(calls) == 4:
+            raise ValueError("local failure after paid calls")
+        payload = {axis: "similar" for axis in (
+            "brighter", "more_saturated", "more_compressed", "more_ambient"
+        )}
+        return {"listening": payload, "listening_unavailable": None}
+
+    monkeypatch.setattr("scripts.eval_listening.listen_comparison", compare)
+    report_path = tmp_path / "out" / "report.json"
+    monkeypatch.setattr(sys, "argv", [
+        "eval_listening", "--manifest", str(path), "--repeats", "1", "--pause", "0",
+        "--report", str(report_path),
+    ])
+    with pytest.raises(SystemExit) as exit_info:
+        eval_listening.main()
+    assert exit_info.value.code == 1
+    report = json.loads(report_path.read_text())
+    assert report["status"] == "error"
+    split = report["splits"]["tuning"]
+    assert split["status"] == "error"
+    assert len(split["rows"]) == 3
+    assert split["scores"]["judgments"] == 3
+    assert split["error"] == {"type": "ValueError", "message": "local failure after paid calls"}

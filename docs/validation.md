@@ -118,7 +118,9 @@ dataset from DI performances you own:
 
 Each performance is rendered through the known EQ, drive, reflection and gain
 changes above, plus a **silence-padding control** (1 s leading and 2 s trailing
-silence, otherwise identical). `manifest.json` lists 7 comparisons per
+silence, otherwise identical). Every other render is zero-padded to the same
+length, so the reverb tail cannot reveal the ambience answer through duration;
+only the silence-padding control differs in length. `manifest.json` lists 7 comparisons per
 performance across the tasks `eq`, `drive`, `ambience`, `level_control` and
 `silence_control`. Held-out performances also use the held-out processing
 settings. Then add any other owned recordings by hand: full mixes, no-guitar
@@ -148,8 +150,13 @@ clips (`"expected": "uncertain"`) and deliberately ambiguous examples.
 ```
 
 Validation rejects a performance listed in both splits, a clip whose performance
-is not assigned, a comparison mixing splits, missing files, unknown axes and
-answers that do not fit the axis. Paths are relative to the manifest. Axes are
+is not assigned, a comparison mixing splits, missing files, non-numeric
+`start`/`end`, unknown axes and answers that do not fit the axis. Before any
+request (and also when skipped without a key) every local clip of the selected
+splits is decoded with its `start`/`end`, so bad intervals, over-length clips,
+unsupported rates/channels and undecodable files fail up front. If a run still
+fails partway, the report is written with `status: "error"`, the judgments made
+so far and the error, and the command exits nonzero. Paths are relative to the manifest. Axes are
 `brighter`, `more_saturated`, `more_compressed`, `more_ambient` (expected `A`,
 `B`, `similar` or `uncertain`) and `tone_similarity` (`similar`, `different` or
 `uncertain`; similar only when all four axes say similar).
@@ -171,8 +178,9 @@ sample counts (judgments, comparisons, performances) and the manifest SHA-256.
 **Visual bias.** Gemini's YouTube input includes images. To test whether
 answers depend on them, upload the *same audio* under different imagery or gear
 labels, list each upload as a clip and give their comparisons the same
-`bias_group`. Bias consistency is the fraction of groups (per repeat) whose
-answers are identical; inconsistency shows visual influence, while consistency
+`bias_group`. Within a group only answers to the same question (same axis and
+candidate B, per repeat) are compared. Bias consistency is the fraction of such
+groups whose answers are identical; inconsistency shows visual influence, while consistency
 is necessary but not sufficient evidence of audio-only judgment.
 
 No manifest evaluation has been run yet; practical listening accuracy on real

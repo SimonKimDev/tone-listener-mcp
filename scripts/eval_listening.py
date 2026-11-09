@@ -192,6 +192,11 @@ class ManifestError(ValueError):
     """An evaluation manifest is malformed or would leak performances across splits."""
 
 
+def _manifest_seconds(name: str, field: str, value: object) -> None:
+    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+        raise ManifestError(f"Clip {name!r} {field} must be a number of seconds or omitted")
+
+
 def load_manifest(path: Path) -> dict:
     """Validate an evaluation manifest and resolve clip paths relative to it.
 
@@ -227,17 +232,26 @@ def load_manifest(path: Path) -> dict:
             raise ManifestError(f"Clip {name!r} needs exactly one of path or youtube")
         entry = {**clip, "split": owner[clip["performance"]]}
         if "path" in clip:
+            if not isinstance(clip["path"], str):
+                raise ManifestError(f"Clip {name!r} path must be a string")
+            for field in ("start", "end"):
+                _manifest_seconds(name, field, clip.get(field))
             local = (path.parent / clip["path"]).resolve()
             if not local.is_file():
                 raise ManifestError(f"Clip {name!r} file does not exist")
             entry["path"] = str(local)
         else:
             youtube = clip["youtube"]
-            if not isinstance(youtube, dict):
+            if not isinstance(youtube, dict) or not isinstance(youtube.get("url"), str):
                 raise ManifestError(f"Clip {name!r} youtube must be an object with url/start/end")
-            canonical, start, end, _ = _youtube_input(
-                youtube.get("url", ""), youtube.get("start"), youtube.get("end")
-            )
+            for field in ("start", "end"):
+                _manifest_seconds(name, field, youtube.get(field))
+            try:
+                canonical, start, end, _ = _youtube_input(
+                    youtube["url"], youtube.get("start"), youtube.get("end")
+                )
+            except ValueError as exc:
+                raise ManifestError(f"Clip {name!r} youtube reference is invalid: {exc}") from exc
             entry["youtube"] = {"url": canonical, "start": start, "end": end}
         resolved[name] = entry
     seen = set()
@@ -274,6 +288,17 @@ def load_manifest(path: Path) -> dict:
         "comparisons": comparisons,
         "splits": splits,
     }
+
+
+def check_manifest_audio(manifest: dict, splits: list[str]) -> None:
+    """Decode every local clip of the selected splits before any paid request is made."""
+    for name, clip in manifest["clips"].items():
+        if clip["split"] not in splits or "path" not in clip:
+            continue
+        try:
+            load_audio(clip["path"], clip.get("start"), clip.get("end"))
+        except (OSError, ValueError) as exc:
+            raise ManifestError(f"Clip {name!r} cannot be evaluated: {exc}") from exc
 
 
 def manifest_judgments(manifest: dict, split: str, repeats: int) -> list[tuple[dict, int, bool]]:
@@ -324,10 +349,12 @@ def score_manifest(rows: list[dict]) -> dict:
         group[False] not in (None, "uncertain") and group[False] == group[True]
         for group in swapped
     )
-    groups: dict[tuple[str, int], list[str | None]] = {}
+    # Only answers to the same question (axis and candidate B) are comparable within a group.
+    groups: dict[tuple[str, str, str, int], list[str | None]] = {}
     for row in rows:
         if row.get("bias_group") and not row["swapped"]:
-            groups.setdefault((row["bias_group"], row["repeat"]), []).append(row["prediction"])
+            key = (row["bias_group"], row["axis"], row["b"], row["repeat"])
+            groups.setdefault(key, []).append(row["prediction"])
     bias = [group for group in groups.values() if len(group) > 1]
     bias_consistent = sum(None not in group and len(set(group)) == 1 for group in bias)
     return {
@@ -369,37 +396,48 @@ def run_manifest(manifest: dict, split: str, repeats: int, pause: float) -> dict
     judgments = manifest_judgments(manifest, split, repeats)
     rng.shuffle(judgments)
     rows: list[dict] = []
-    for comparison, repeat, swapped in judgments:
-        first, second = comparison["a"], comparison["b"]
-        if swapped:
-            first, second = second, first
-        if "youtube" in clips[first]:
-            youtube = clips[first]["youtube"]
-            matching = None
-            response = listen_youtube_comparison(
-                youtube["url"], youtube["start"], youtube["end"], audio(second)
-            )
-        else:
-            matched, matching = loudness_match(audio(first), audio(second))
-            response = listen_comparison(audio(first), matched)
-        rows.append({
-            "comparison": comparison["id"],
-            "task": comparison["task"],
-            "axis": comparison["axis"],
-            "expected": comparison["expected"],
-            "bias_group": comparison.get("bias_group"),
-            "performance": clips[comparison["a"]]["performance"],
-            "repeat": repeat,
-            "swapped": swapped,
-            "prediction": manifest_prediction(
-                response["listening"], comparison["axis"], swapped
-            ),
-            "matching": matching,
-            "response": response,
-        })
-        if response["listening_unavailable"]:
-            return {"status": "blocked", "seed": seed, "rows": rows, "scores": score_manifest(rows)}
-        time.sleep(pause)
+    try:
+        for comparison, repeat, swapped in judgments:
+            first, second = comparison["a"], comparison["b"]
+            if swapped:
+                first, second = second, first
+            if "youtube" in clips[first]:
+                youtube = clips[first]["youtube"]
+                matching = None
+                response = listen_youtube_comparison(
+                    youtube["url"], youtube["start"], youtube["end"], audio(second)
+                )
+            else:
+                matched, matching = loudness_match(audio(first), audio(second))
+                response = listen_comparison(audio(first), matched)
+            rows.append({
+                "comparison": comparison["id"],
+                "task": comparison["task"],
+                "axis": comparison["axis"],
+                "expected": comparison["expected"],
+                "a": comparison["a"],
+                "b": comparison["b"],
+                "bias_group": comparison.get("bias_group"),
+                "performance": clips[comparison["a"]]["performance"],
+                "repeat": repeat,
+                "swapped": swapped,
+                "prediction": manifest_prediction(
+                    response["listening"], comparison["axis"], swapped
+                ),
+                "matching": matching,
+                "response": response,
+            })
+            if response["listening_unavailable"]:
+                return {"status": "blocked", "seed": seed, "rows": rows,
+                        "scores": score_manifest(rows)}
+            time.sleep(pause)
+    # Any failure keeps the judgments already paid for instead of discarding them.
+    except Exception as exc:  # noqa: BLE001
+        local = isinstance(exc, (OSError, ValueError))
+        return {
+            "status": "error", "seed": seed, "rows": rows, "scores": score_manifest(rows),
+            "error": {"type": type(exc).__name__, "message": str(exc) if local else None},
+        }
     return {"status": "complete", "seed": seed, "rows": rows, "scores": score_manifest(rows)}
 
 
@@ -428,6 +466,8 @@ def evaluate(
     manifest = load_manifest(manifest_path) if manifest_path else None
     if manifest and (missing := [split for split in splits if split not in manifest["splits"]]):
         raise ValueError(f"Manifest has no performances for split(s): {missing}")
+    if manifest:
+        check_manifest_audio(manifest, splits)
     if not np.isfinite(pause) or pause < 0:
         raise ValueError("pause must be finite and nonnegative")
     revision = subprocess.run(
@@ -498,8 +538,8 @@ def evaluate(
                 run_manifest(manifest, split, repeats, pause) if manifest
                 else run_split(split, repeats, pause)
             )
-            if report["splits"][split]["status"] == "blocked":
-                return {**report, "status": "blocked"}
+            if report["splits"][split]["status"] in ("blocked", "error"):
+                return {**report, "status": report["splits"][split]["status"]}
     return {**report, "status": "complete"}
 
 
@@ -534,7 +574,7 @@ def main() -> None:
     print(json.dumps({"status": report["status"], "scores": {
         name: data["scores"] for name, data in report["splits"].items()
     }}))
-    if report["status"] == "blocked":
+    if report["status"] in ("blocked", "error"):
         raise SystemExit(1)
 
 
