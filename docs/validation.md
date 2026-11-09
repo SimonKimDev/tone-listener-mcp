@@ -37,7 +37,9 @@ Tests cover bounded decoding, level/spectrum/stereo metrics, linear-gain invaria
 known EQ/drive directions, provider mocks and an actual stdio process listing and
 calling all six MCP tools. No API key or network is needed. CI also installs the
 built wheel into a clean environment and runs `scripts/smoke_installed.py` against
-the installed executable.
+the installed executable. The script accepts an absolute or relative executable
+path or a command on `PATH`, and runs the server in a temporary directory rather
+than the checkout.
 
 ## Blinded live evaluation (opt-in)
 

@@ -2,8 +2,10 @@
 
 Usage: python scripts/smoke_installed.py /path/to/venv/bin/tone-listener-mcp
 
+The executable may be an absolute or caller-relative path, or a command name on PATH.
 Runs without GEMINI_API_KEY or network: lists tools, calls server_info and measures a
-generated sine wave with audio_metrics.
+generated sine wave with audio_metrics. The server runs in a temporary directory, not
+the caller's checkout, and the audio is passed relative to that directory.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -23,6 +26,15 @@ EXPECTED_TOOLS = {
     "server_info", "analyze_youtube", "audio_metrics", "analyze_audio", "compare_audio",
     "compare_youtube_reference",
 }
+
+
+def resolve_executable(executable: str) -> str:
+    """Resolve paths against the caller's cwd and names via PATH before the cwd changes."""
+    found = shutil.which(executable)
+    if found is None:
+        kind = "path" if os.path.dirname(executable) else "command on PATH"
+        raise SystemExit(f"Executable {kind} not found or not executable: {executable}")
+    return os.path.abspath(found)
 
 
 async def smoke(executable: str, audio: Path) -> None:
@@ -40,7 +52,8 @@ async def smoke(executable: str, audio: Path) -> None:
         info = await session.call_tool("server_info")
         if info.is_error or info.structured_content["listening_available"] is not False:
             raise SystemExit(f"server_info failed: {info.structured_content}")
-        metrics = await session.call_tool("audio_metrics", {"path": str(audio)})
+        # A relative path only resolves if the server really runs in the audio directory.
+        metrics = await session.call_tool("audio_metrics", {"path": audio.name})
         if metrics.is_error or abs(metrics.structured_content["spectrum"]["centroid_hz"] - 1000) > 5:
             raise SystemExit("audio_metrics failed")
         print(f"ok: {info.structured_content['name']} {info.structured_content['version']}, "
@@ -50,7 +63,7 @@ async def smoke(executable: str, audio: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("executable")
-    executable = parser.parse_args().executable
+    executable = resolve_executable(parser.parse_args().executable)
     with tempfile.TemporaryDirectory() as directory:
         audio = Path(directory) / "sine.wav"
         rate = 44_100
