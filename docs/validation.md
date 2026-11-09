@@ -86,7 +86,11 @@ that every small drive increment must change a musical category. Gain-only
 tone equality requires all four comparison axes to say `similar`.
 
 Reports must be outside the repo or under gitignored `.eval/`; existing reports
-are never overwritten. Without a key the harness writes `status: "skipped"`
+are never overwritten. The report path is claimed exclusively before any request:
+an existing file or an unwritable destination fails with zero API calls. While a
+run is in progress the file holds `status: "running"` (left as-is if the process
+is killed, never a completed report); it is replaced by the full report, or
+removed when validation fails before any request. Without a key the harness writes `status: "skipped"`
 and performs **zero API calls**. A failed API response stops the budget early
 with `status: "blocked"` and a nonzero exit status. Partial results are not a
 completed benchmark, and skipped runs are not evidence of listening accuracy.
@@ -149,9 +153,13 @@ clips (`"expected": "uncertain"`) and deliberately ambiguous examples.
 }
 ```
 
-Validation rejects a performance listed in both splits, a clip whose performance
-is not assigned, a comparison mixing splits, missing files, non-numeric
-`start`/`end`, unknown axes and answers that do not fit the axis. Before any
+Validation rejects invalid JSON, `NaN`/`Infinity` or overflowing numbers anywhere
+in the manifest, a non-string description, split performance IDs or comparison
+`a`/`b`/`axis`/`expected` values that are not strings, a performance listed in
+both splits, a clip whose performance is not assigned, a comparison mixing
+splits, missing files, non-numeric or nonfinite `start`/`end`, unknown axes and
+answers that do not fit the axis. A comparison may pair clips from different
+performances in the same split. Before any
 request (and also when skipped without a key) every local clip of the selected
 splits is decoded with its `start`/`end`, so bad intervals, over-length clips,
 unsupported rates/channels and undecodable files fail up front. If a run still
@@ -174,13 +182,18 @@ without a key) is the generation-call budget: comparisons in the split x orders 
 `--repeats` (1-5 for manifests). Reports include accuracy per task, abstention
 rate (`uncertain` answers among available answers), A/B order consistency,
 sample counts (judgments, comparisons, performances) and the manifest SHA-256.
+Each row records the performances of both clips, and performance counts are the
+union of both sources, whichever clip was presented first.
 
 **Visual bias.** Gemini's YouTube input includes images. To test whether
 answers depend on them, upload the *same audio* under different imagery or gear
 labels, list each upload as a clip and give their comparisons the same
 `bias_group`. Within a group only answers to the same question (same axis and
 candidate B, per repeat) are compared. Bias consistency is the fraction of such
-groups whose answers are identical; inconsistency shows visual influence, while consistency
+groups whose answers are identical and neither `uncertain` nor unavailable,
+matching order consistency; `bias_groups_with_abstention` and
+`bias_groups_with_unavailable` count the groups excluded for those reasons.
+Inconsistency shows visual influence, while consistency
 is necessary but not sufficient evidence of audio-only judgment.
 
 No manifest evaluation has been run yet; practical listening accuracy on real

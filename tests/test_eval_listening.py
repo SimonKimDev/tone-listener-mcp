@@ -237,7 +237,7 @@ def test_manifest_scoring_by_task_order_abstention_and_bias():
             axis="brighter", b="take1/reference"):
         return {"comparison": comparison, "task": task, "expected": expected,
                 "prediction": prediction, "swapped": swapped, "repeat": repeat,
-                "performance": "take1", "bias_group": bias, "axis": axis, "b": b}
+                "performances": ["take1"], "bias_group": bias, "axis": axis, "b": b}
 
     result = score_manifest([
         row("eq", "eq", "B", "B"), row("eq", "eq", "B", "B", swapped=True),
@@ -311,7 +311,7 @@ def test_bias_groups_only_compare_answers_to_the_same_question():
     def row(comparison, prediction, axis="brighter", b="take1/reference", repeat=0):
         return {"comparison": comparison, "task": "visual", "expected": "similar",
                 "prediction": prediction, "swapped": False, "repeat": repeat,
-                "performance": "take1", "bias_group": "cover", "axis": axis, "b": b}
+                "performances": ["take1"], "bias_group": "cover", "axis": axis, "b": b}
 
     result = score_manifest([
         row("yt1-bright", "similar"), row("yt2-bright", "similar"),
@@ -425,3 +425,194 @@ def test_mid_run_failure_writes_partial_error_report(tmp_path, monkeypatch):
     assert len(split["rows"]) == 3
     assert split["scores"]["judgments"] == 3
     assert split["error"] == {"type": "ValueError", "message": "local failure after paid calls"}
+
+
+def listening_counter(monkeypatch, answer="uncertain"):
+    calls = []
+
+    def compare(a, b):
+        calls.append(1)
+        payload = dict.fromkeys(
+            ("brighter", "more_saturated", "more_compressed", "more_ambient"), answer
+        )
+        return {"listening": payload, "listening_unavailable": None}
+
+    monkeypatch.setattr("scripts.eval_listening.listen_comparison", compare)
+    return calls
+
+
+def test_performance_counts_include_both_sources_in_any_order(tmp_path, monkeypatch):
+    path = build_manifest(tmp_path)
+
+    def cross(data):
+        data["splits"] = {"tuning": ["take1", "take2"]}
+        data["comparisons"] = [
+            {"id": "cross", "a": "take1/reference", "b": "take2/reference",
+             "task": "cross_take", "axis": "brighter", "expected": "uncertain"},
+            # A common reference with distinct candidates from another performance.
+            {"id": "ref-vs-take2-eq", "a": "take1/reference", "b": "take2/eq_bright",
+             "task": "shared_ref", "axis": "brighter", "expected": "B"},
+            {"id": "ref-vs-take1-eq", "a": "take1/reference", "b": "take1/eq_bright",
+             "task": "shared_ref", "axis": "brighter", "expected": "B"},
+        ]
+
+    edit_manifest(path, cross)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls = listening_counter(monkeypatch)
+    split = evaluate(["tuning"], repeats=1, pause=0, manifest_path=path)["splits"]["tuning"]
+    assert len(calls) == 6
+    assert all(row["performances"] in (["take1", "take2"], ["take1"]) for row in split["rows"])
+    scores = split["scores"]
+    assert scores["sample_counts"] == {"judgments": 6, "comparisons": 3, "performances": 2}
+    assert scores["by_task"]["cross_take"]["performances"] == 2
+    assert scores["by_task"]["shared_ref"]["performances"] == 2
+    swapped = [row for row in split["rows"] if row["comparison"] == "cross"]
+    assert {row["swapped"] for row in swapped} == {False, True}
+    assert swapped[0]["performances"] == swapped[1]["performances"]
+
+
+def test_cross_split_pairs_are_still_rejected(tmp_path):
+    from scripts.eval_listening import ManifestError, load_manifest
+
+    path = edit_manifest(build_manifest(tmp_path), lambda data: data["comparisons"].append({
+        "id": "leak", "a": "take1/reference", "b": "take2/reference",
+        "task": "cross_take", "axis": "brighter", "expected": "A",
+    }))
+    with pytest.raises(ManifestError, match="different splits"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize(("change", "message"), [
+    (lambda data: data["splits"]["tuning"].append({"id": "x"}), "nonempty strings"),
+    (lambda data: data["splits"]["tuning"].append(["take3"]), "nonempty strings"),
+    (lambda data: data["comparisons"][0].update(a={"clip": 1}), "two different clips"),
+    (lambda data: data["comparisons"][0].update(b=["take1/reference"]), "two different clips"),
+    (lambda data: data["comparisons"][0].update(expected={"B": True}), "expected"),
+    (lambda data: data["comparisons"][0].update(axis=["brighter"]), "axis"),
+    (lambda data: data.update(description=["not", "text"]), "description"),
+])
+def test_unhashable_manifest_values_are_manifest_errors(tmp_path, monkeypatch, change, message):
+    from scripts.eval_listening import ManifestError
+
+    path = edit_manifest(build_manifest(tmp_path), change)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls = listening_counter(monkeypatch)
+    with pytest.raises(ManifestError, match=message):
+        evaluate(["tuning"], repeats=1, pause=0, manifest_path=path)
+    assert calls == []
+
+
+@pytest.mark.parametrize(("old", "new"), [
+    ('"description": "', '"description": NaN, "old": "'),
+    ('"version": 1', '"version": 1, "note": Infinity'),
+    ('"version": 1', '"version": 1, "note": -Infinity'),
+    ('"version": 1', '"version": 1, "note": 1e999'),
+    ('"path": "take1/eq_bright.wav"', '"path": "take1/eq_bright.wav", "end": 1e999'),
+    ('"path": "take1/eq_bright.wav"', '"path": "take1/eq_bright.wav", "end": 1' + "0" * 400),
+    ('"version": 1', '"version": 1, "note": "\\ud800'),
+])
+def test_nonfinite_or_invalid_json_is_rejected_before_any_request(
+    tmp_path, monkeypatch, old, new
+):
+    from scripts.eval_listening import ManifestError
+
+    path = build_manifest(tmp_path)
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, new, 1))
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls = listening_counter(monkeypatch)
+    with pytest.raises(ManifestError, match="finite|valid JSON"):
+        evaluate(["tuning"], repeats=1, pause=0, manifest_path=path)
+    assert calls == []
+
+
+def run_main(monkeypatch, *arguments):
+    from scripts import eval_listening
+
+    monkeypatch.setattr(sys, "argv", ["eval_listening", *map(str, arguments)])
+    eval_listening.main()
+
+
+def test_unusable_report_destinations_fail_before_any_request(tmp_path, monkeypatch, capsys):
+    path = build_manifest(tmp_path / "data")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls = listening_counter(monkeypatch)
+    blocker = tmp_path / "file"
+    blocker.write_text("not a directory")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    existing = tmp_path / "existing.json"
+    existing.write_text("keep")
+    try:
+        for destination, message in (
+            (blocker / "report.json", "not writable"),
+            (locked / "report.json", "not writable"),
+            (existing, "Refusing to overwrite"),
+        ):
+            with pytest.raises(SystemExit) as exit_info:
+                run_main(monkeypatch, "--manifest", path, "--repeats", 1, "--pause", 0,
+                         "--report", destination)
+            assert exit_info.value.code == 2
+            assert message in capsys.readouterr().err
+    finally:
+        locked.chmod(0o700)
+    assert calls == []
+    assert existing.read_text() == "keep"
+    assert list(locked.iterdir()) == []
+
+
+def test_reserved_report_is_removed_on_validation_error_and_replaced_on_success(
+    tmp_path, monkeypatch, capsys
+):
+    path = build_manifest(tmp_path / "data")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    calls = listening_counter(monkeypatch, answer="similar")
+    report = tmp_path / "out" / "report.json"
+    with pytest.raises(SystemExit):
+        run_main(monkeypatch, "--manifest", path, "--repeats", 0, "--report", report)
+    assert not report.exists() and calls == []
+    capsys.readouterr()
+
+    seen = []
+
+    def compare(a, b):
+        # The destination is already claimed, and marked unfinished, while requests run.
+        seen.append(json.loads(report.read_text())["status"])
+        return {"listening": dict.fromkeys(
+            ("brighter", "more_saturated", "more_compressed", "more_ambient"), "similar"
+        ), "listening_unavailable": None}
+
+    monkeypatch.setattr("scripts.eval_listening.listen_comparison", compare)
+    run_main(monkeypatch, "--manifest", path, "--repeats", 1, "--pause", 0, "--report", report)
+    assert set(seen) == {"running"}
+    assert json.loads(report.read_text())["status"] == "complete"
+
+
+def test_bias_consistency_excludes_abstentions_and_failures():
+    from scripts.eval_listening import score_manifest
+
+    def row(prediction, axis="brighter", repeat=0, group="g"):
+        return {"comparison": f"{group}-{axis}-{prediction}-{repeat}", "task": "visual",
+                "expected": "similar", "prediction": prediction, "swapped": False,
+                "repeat": repeat, "performances": ["take1"], "bias_group": group,
+                "axis": axis, "b": "take1/reference"}
+
+    def bias(rows):
+        result = score_manifest(rows)
+        return tuple(result[key] for key in (
+            "bias_groups_consistent", "bias_groups", "bias_consistency",
+            "bias_groups_with_abstention", "bias_groups_with_unavailable",
+        ))
+
+    assert bias([row("uncertain"), row("uncertain")]) == (0, 1, 0, 1, 0)
+    assert bias([row(None), row(None)]) == (0, 1, 0, 0, 1)
+    assert bias([row("similar"), row(None)]) == (0, 1, 0, 0, 1)
+    assert bias([row("similar"), row("uncertain")]) == (0, 1, 0, 1, 0)
+    assert bias([row("similar"), row("similar")]) == (1, 1, 1, 0, 0)
+    assert bias([
+        row("A"), row("A"),
+        row("uncertain", repeat=1), row("uncertain", repeat=1),
+        row("B", axis="more_ambient"), row(None, axis="more_ambient"),
+    ]) == (1, 3, pytest.approx(1 / 3), 1, 1)

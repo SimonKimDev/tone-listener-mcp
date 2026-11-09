@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import stat
@@ -193,8 +194,40 @@ class ManifestError(ValueError):
 
 
 def _manifest_seconds(name: str, field: str, value: object) -> None:
-    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
-        raise ManifestError(f"Clip {name!r} {field} must be a number of seconds or omitted")
+    if value is None:
+        return
+    try:
+        finite = not isinstance(value, bool) and isinstance(value, (int, float)) and (
+            math.isfinite(value)
+        )
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise ManifestError(f"Clip {name!r} {field} must be a finite number of seconds or omitted")
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise ManifestError(f"Manifest numbers must be finite: {text}")
+    return value
+
+
+def _reject_constant(text: str) -> None:
+    raise ManifestError(f"Manifest numbers must be finite: {text}")
+
+
+def _read_manifest(path: Path) -> dict:
+    # Everything retained in the report must serialize with allow_nan=False, so NaN,
+    # Infinity and overflowing literals such as 1e999 are rejected before any request.
+    try:
+        return json.loads(
+            path.read_text(), parse_float=_finite_float, parse_constant=_reject_constant
+        )
+    except ManifestError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ManifestError(f"Manifest is not valid JSON: {exc}") from exc
 
 
 def load_manifest(path: Path) -> dict:
@@ -202,9 +235,11 @@ def load_manifest(path: Path) -> dict:
 
     Splits assign whole performances, so no take of a held-out phrase can tune prompts.
     """
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict) or data.get("version") != 1:
+    data = _read_manifest(path)
+    if not isinstance(data, dict) or data.get("version") != 1 or isinstance(data["version"], bool):
         raise ManifestError("Manifest must be a JSON object with version 1")
+    if not isinstance(data.get("description"), (str, type(None))):
+        raise ManifestError("Manifest description must be a string or omitted")
     clips, comparisons, splits = data.get("clips"), data.get("comparisons"), data.get("splits")
     if not isinstance(clips, dict) or not clips:
         raise ManifestError("Manifest clips must be a nonempty object")
@@ -217,6 +252,8 @@ def load_manifest(path: Path) -> dict:
         if not isinstance(performances, list) or not performances:
             raise ManifestError(f"Split {split} must list at least one performance")
         for performance in performances:
+            if not isinstance(performance, str) or not performance:
+                raise ManifestError(f"Split {split} performances must be nonempty strings")
             if performance in owner:
                 raise ManifestError(
                     f"Performance {performance!r} appears in both {owner[performance]} and {split}"
@@ -263,16 +300,17 @@ def load_manifest(path: Path) -> dict:
             raise ManifestError(f"Comparison id must be a unique string: {identifier!r}")
         seen.add(identifier)
         a, b = comparison.get("a"), comparison.get("b")
-        if a not in resolved or b not in resolved or a == b:
+        if not isinstance(a, str) or not isinstance(b, str) or a not in resolved or b not in resolved or a == b:
             raise ManifestError(f"Comparison {identifier} must reference two different clips")
         if "youtube" in resolved[b]:
             raise ManifestError(f"Comparison {identifier}: only reference A may be a YouTube clip")
         if resolved[a]["split"] != resolved[b]["split"]:
             raise ManifestError(f"Comparison {identifier} mixes performances from different splits")
         axis = comparison.get("axis")
-        if axis not in MANIFEST_AXES:
+        if not isinstance(axis, str) or axis not in MANIFEST_AXES:
             raise ManifestError(f"Comparison {identifier} axis must be one of {MANIFEST_AXES}")
-        if comparison.get("expected") not in MANIFEST_EXPECTED[axis]:
+        expected = comparison.get("expected")
+        if not isinstance(expected, str) or expected not in MANIFEST_EXPECTED[axis]:
             raise ManifestError(
                 f"Comparison {identifier} expected must be one of {sorted(MANIFEST_EXPECTED[axis])}"
             )
@@ -323,6 +361,11 @@ def _rate(numerator: int, denominator: int) -> float | None:
     return numerator / denominator if denominator else None
 
 
+def _performances(rows: list[dict]) -> set[str]:
+    """Every source performance behind the judgments, whichever clip was presented first."""
+    return {performance for row in rows for performance in row["performances"]}
+
+
 def score_manifest(rows: list[dict]) -> dict:
     answered = [row for row in rows if row["prediction"] is not None]
     abstained = sum(row["prediction"] == "uncertain" for row in answered)
@@ -339,7 +382,7 @@ def score_manifest(rows: list[dict]) -> dict:
             "abstentions": task_abstained,
             "abstention_rate": _rate(task_abstained, len(selected)),
             "comparisons": len({row["comparison"] for row in selected}),
-            "performances": len({row["performance"] for row in selected}),
+            "performances": len(_performances(selected)),
         }
     pairs: dict[tuple[str, int], dict[bool, str | None]] = {}
     for row in rows:
@@ -356,7 +399,10 @@ def score_manifest(rows: list[dict]) -> dict:
             key = (row["bias_group"], row["axis"], row["b"], row["repeat"])
             groups.setdefault(key, []).append(row["prediction"])
     bias = [group for group in groups.values() if len(group) > 1]
-    bias_consistent = sum(None not in group and len(set(group)) == 1 for group in bias)
+    # As with order consistency, abstentions and failures never count as a stable answer.
+    bias_consistent = sum(
+        None not in group and "uncertain" not in group and len(set(group)) == 1 for group in bias
+    )
     return {
         "correct": correct,
         "judgments": len(rows),
@@ -370,10 +416,12 @@ def score_manifest(rows: list[dict]) -> dict:
         "bias_groups_consistent": bias_consistent,
         "bias_groups": len(bias),
         "bias_consistency": _rate(bias_consistent, len(bias)),
+        "bias_groups_with_abstention": sum("uncertain" in group for group in bias),
+        "bias_groups_with_unavailable": sum(None in group for group in bias),
         "sample_counts": {
             "judgments": len(rows),
             "comparisons": len({row["comparison"] for row in rows}),
-            "performances": len({row["performance"] for row in rows}),
+            "performances": len(_performances(rows)),
         },
         "by_task": by_task,
     }
@@ -418,7 +466,9 @@ def run_manifest(manifest: dict, split: str, repeats: int, pause: float) -> dict
                 "a": comparison["a"],
                 "b": comparison["b"],
                 "bias_group": comparison.get("bias_group"),
-                "performance": clips[comparison["a"]]["performance"],
+                "performances": sorted({
+                    clips[comparison["a"]]["performance"], clips[comparison["b"]]["performance"]
+                }),
                 "repeat": repeat,
                 "swapped": swapped,
                 "prediction": manifest_prediction(
@@ -543,6 +593,36 @@ def evaluate(
     return {**report, "status": "complete"}
 
 
+def reserve_report(destination: Path, parser: argparse.ArgumentParser):
+    """Claim the report path exclusively before any request, so results are never lost.
+
+    The placeholder says the run is unfinished; it is replaced by the full report, or
+    removed if the evaluation fails before producing one.
+    """
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        parser.error(f"Report destination is not writable: {exc}")
+    try:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        parser.error("Refusing to overwrite an existing evaluation report")
+    except OSError as exc:
+        parser.error(f"Report destination is not writable: {exc}")
+    report_file = os.fdopen(descriptor, "w")
+    try:
+        report_file.write(json.dumps({
+            "status": "running",
+            "reason": "Evaluation in progress or interrupted; this is not a completed report",
+        }) + "\n")
+        report_file.flush()
+    except BaseException:
+        report_file.close()
+        destination.unlink(missing_ok=True)
+        raise
+    return report_file
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split", choices=("tuning", "held_out", "both"), default="tuning")
@@ -560,17 +640,22 @@ def main() -> None:
     destination = args.report.expanduser().resolve()
     if destination.is_relative_to(root) and not destination.is_relative_to(root / ".eval"):
         parser.error("Report must be outside the repository or in gitignored .eval/")
-    if destination.exists():
-        parser.error("Refusing to overwrite an existing evaluation report")
     if args.env_file:
         load_credentials(args.env_file.expanduser())
     splits = ["tuning", "held_out"] if args.split == "both" else [args.split]
+    report_file = reserve_report(destination, parser)
     try:
         report = evaluate(splits, args.repeats, args.pause, args.manifest)
-    except (OSError, ValueError) as exc:
-        parser.error(str(exc))
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+    except BaseException as exc:
+        report_file.close()
+        destination.unlink(missing_ok=True)
+        if isinstance(exc, (OSError, ValueError)):
+            parser.error(str(exc))
+        raise
+    with report_file:
+        report_file.seek(0)
+        report_file.truncate()
+        report_file.write(json.dumps(report, indent=2, allow_nan=False) + "\n")
     print(json.dumps({"status": report["status"], "scores": {
         name: data["scores"] for name, data in report["splits"].items()
     }}))
