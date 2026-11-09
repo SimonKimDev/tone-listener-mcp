@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from mcp.server.mcpserver import MCPServer
 
@@ -11,6 +11,13 @@ from tone_listener_mcp.audio_io import load_audio
 from tone_listener_mcp.comparison import compare
 from tone_listener_mcp.listener import listen, listen_youtube
 from tone_listener_mcp.metrics import measure
+from tone_listener_mcp.schemas import (
+    AnalyzeAudioResponse,
+    AnalyzeYouTubeResponse,
+    AudioMetrics,
+    CompareResponse,
+    ServerInfo,
+)
 
 mcp = MCPServer(
     name="tone-listener",
@@ -23,22 +30,22 @@ mcp = MCPServer(
 
 
 @mcp.tool(structured_output=True)
-def server_info() -> dict[str, Any]:
+def server_info() -> ServerInfo:
     """Return basic information about this server."""
-    return {
+    return ServerInfo.model_validate({
         "name": "tone-listener-mcp",
         "version": __version__,
         "primary_tool": "analyze_youtube",
         "youtube_local_extraction": False,
-    }
+    })
 
 
 @mcp.tool(structured_output=True)
 def audio_metrics(
     path: str, start: float | None = None, end: float | None = None
-) -> dict[str, Any]:
+) -> AudioMetrics:
     """Measure local audio levels, spectrum and stereo. Times are seconds; end is exclusive."""
-    return measure(load_audio(path, start, end))
+    return AudioMetrics.model_validate(measure(load_audio(path, start, end)))
 
 
 @mcp.tool(structured_output=True)
@@ -47,10 +54,10 @@ def analyze_audio(
     start: float | None = None,
     end: float | None = None,
     question: str | None = None,
-) -> dict[str, Any]:
+) -> AnalyzeAudioResponse:
     """Measure a clip and optionally upload it to Gemini for guitar listening."""
     clip = load_audio(path, start, end)
-    return {"metrics": measure(clip), **listen(clip, question)}
+    return AnalyzeAudioResponse.model_validate({"metrics": measure(clip), **listen(clip, question)})
 
 
 @mcp.tool(structured_output=True)
@@ -59,9 +66,9 @@ def analyze_youtube(
     start: float | None = None,
     end: float | None = None,
     question: str | None = None,
-) -> dict[str, Any]:
+) -> AnalyzeYouTubeResponse:
     """Listen to a public YouTube clip via Gemini. Does not extract a WAV or measure local DSP."""
-    return listen_youtube(url, start, end, question)
+    return AnalyzeYouTubeResponse.model_validate(listen_youtube(url, start, end, question))
 
 
 @mcp.tool(structured_output=True)
@@ -74,18 +81,18 @@ def compare_audio(
     end_b: float | None = None,
     focus: str | None = None,
     matching: Literal["active", "whole"] = "active",
-) -> dict[str, Any]:
+) -> CompareResponse:
     """Compare B to reference A with RMS matching and optional Gemini A/B listening.
 
     matching="active" (default) matches gated, non-silent regions so silence padding does
     not change the applied gain; "whole" matches whole-clip RMS including silence and tails.
     """
-    return compare(
+    return CompareResponse.model_validate(compare(
         load_audio(path_a, start_a, end_a),
         load_audio(path_b, start_b, end_b),
         focus,
         matching,
-    )
+    ))
 
 
 def main() -> None:

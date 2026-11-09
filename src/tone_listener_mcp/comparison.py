@@ -28,6 +28,17 @@ BAND_LABELS = {
 }
 
 
+BAND_CHARACTER = {
+    "below_80": "sub-bass weight and rumble",
+    "80_250": "low-end thump and boom",
+    "250_800": "body, boxiness and mud",
+    "800_2000": "midrange honk and note presence",
+    "2000_5000": "bite, pick attack and harshness",
+    "5000_8000": "fizz and sizzle",
+    "above_8000": "air, hiss and cymbal-like fizz",
+}
+
+
 MatchingStrategy = Literal["active", "whole"]
 MATCHING_METHODS = {
     "active": f"Active-region RMS: {GATING_METHOD}",
@@ -142,16 +153,34 @@ def compare(
     hints = []
     for name, value in band_deltas.items():
         if evidence[name] == "sufficient" and value is not None and abs(value) >= HINT_THRESHOLD_DB:
-            direction = "Cut" if value > 0 else "Boost"
-            observation = (
-                f"B has {value:+.1f} dB relative band energy versus A in {BAND_LABELS[name]}. "
+            direction = "cut" if value > 0 else "boost"
+            label = BAND_LABELS[name]
+            observation = f"B has {value:+.1f} dB relative band energy versus A in {label}."
+            alternative = (
+                "Saturation harmonics, performance and ambience can also change band energy; "
+                "compare drive/dynamics first. This is not a diagnosis of EQ."
             )
-            hints.append(
-                observation + "This is not a diagnosis of EQ: saturation harmonics, performance "
-                "and ambience can also change band energy. Compare drive/dynamics first. "
-                f"Only if EQ is the cause, try a relative {direction.lower()} in B; "
-                "this is not a knob value or proof that EQ can recreate A."
+            listen_for = (
+                f"Whether B's {BAND_CHARACTER[name]} now matches A without other bands "
+                "becoming exposed."
             )
+            hints.append({
+                "family": "eq",
+                "band": name,
+                "band_label": label,
+                "direction": direction,
+                "delta_db": value,
+                "observation": observation,
+                "alternative_explanation": alternative,
+                "listen_for": listen_for,
+                "text": (
+                    f"{observation} {alternative} Only if EQ is the cause, try a relative "
+                    f"{direction} in B; this is not a knob value or proof that EQ can recreate A."
+                ),
+            })
+    hints.sort(key=lambda hint: -abs(hint["delta_db"]))
+    for priority, hint in enumerate(hints, 1):
+        hint["priority"] = priority
     stereo_a, stereo_b = metrics_a["stereo"], matched_metrics_b["stereo"]
     stereo_deltas = (
         {key: delta(stereo_a[key], stereo_b[key])

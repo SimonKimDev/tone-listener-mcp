@@ -129,7 +129,10 @@ are resolved on the machine running this server, not necessarily the client mach
 
 ## Tools
 
-All tools return structured JSON as well as MCP-compatible content. Invalid files,
+All tools return structured JSON as well as MCP-compatible content. Each tool
+publishes a typed `outputSchema` generated from the Pydantic models in
+`src/tone_listener_mcp/schemas.py`; responses may gain new keys in later versions.
+Invalid files,
 URLs or intervals return an MCP tool error. Local-file times are seconds; `start` defaults to zero,
 `end` is exclusive and defaults to EOF. An endpoint past EOF is clamped to EOF.
 `~` is expanded, and original channels/sample rate are retained for local metrics.
@@ -292,11 +295,28 @@ evidence: `deltas_b_minus_a.band_evidence` marks each band `sufficient`,
 changes give unstable ratios) or `unavailable` (above Nyquist, or every band when A
 and B have different Nyquist frequencies). Raw deltas are still reported for
 every band, but only `sufficient` bands with at least 1 dB of change produce
-hints. Silence makes RMS
+hints. Each hint is an object with `family: "eq"`, `band`, `band_label`,
+`direction` (`cut`/`boost`), `delta_db`, `priority` (1 = largest difference),
+`observation`, `alternative_explanation`, `listen_for` and a readable `text`.
+Silence makes RMS
 matching undefined and is explicitly reported. Stereo deltas require two stereo
 clips. Gemini compares both uploads in one request and returns differences,
 which clip is brighter/more saturated/more compressed/more ambient, suggested
-adjustments and uncertainties.
+adjustments and uncertainties. Each suggested adjustment is one experiment:
+
+```json
+{
+  "family": "ambience",
+  "direction": "reduce reverb amount",
+  "priority": 1,
+  "observation": "Sustained notes are similarly bright, but B has a longer audible tail",
+  "alternative_explanation": "Room sound in the B recording",
+  "listen_for": "Tail length after the final chord"
+}
+```
+
+`family` is one of `gain`, `eq`, `compression`, `ambience`, `delay`,
+`modulation`, `playing` or `other`.
 
 When the clips have different Nyquist frequencies, their relative energies use
 different normalization ranges. Relative band deltas are then `null` and the

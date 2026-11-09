@@ -107,7 +107,7 @@ def test_analyze_metrics_without_key(tmp_path, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     path = tmp_path / "tone.wav"
     sf.write(path, np.ones(16000) * 0.1, 16000)
-    result = analyze_audio(str(path), end=0.5)
+    result = analyze_audio(str(path), end=0.5).model_dump()
     assert result["metrics"]["clip"]["duration_seconds"] == 0.5
     assert result["metrics"]["level"]["rms_dbfs"] is not None
     assert result["listening_unavailable"]

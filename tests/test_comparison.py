@@ -40,7 +40,14 @@ def test_high_frequency_boost_direction():
     result = compare(clip(low + high), clip(low + 2 * high))
     difference = result["deltas_b_minus_a"]["relative_band_db"]["2000_5000"]
     assert difference == pytest.approx(10 * np.log10(0.8 / 0.5), abs=0.05)
-    assert any("cut" in hint and "2-5 kHz" in hint for hint in result["eq_direction_hints"])
+    hint = next(h for h in result["eq_direction_hints"] if h["band"] == "2000_5000")
+    assert hint["direction"] == "cut"
+    assert hint["family"] == "eq"
+    hints = result["eq_direction_hints"]
+    assert [h["priority"] for h in hints] == list(range(1, len(hints) + 1))
+    assert hints[0]["band"] == "250_800" and hints[0]["direction"] == "boost"
+    assert hint["delta_db"] > 1
+    assert "2-5 kHz" in hint["text"] and "bite" in hint["listen_for"]
     assert result["deltas_b_minus_a"]["centroid_hz"] > 0
     bands = result["metrics_a"]["spectrum"]["bands"]
     assert bands["above_8000"]["effective_range_hz"] == [8000, 24000]
@@ -99,7 +106,11 @@ def test_two_uploads_one_request(monkeypatch):
         "more_saturated": "similar",
         "more_compressed": "uncertain",
         "more_ambient": "A",
-        "suggested_adjustments": ["Reduce B treble"],
+        "suggested_adjustments": [{
+            "family": "eq", "direction": "reduce treble in B", "priority": 1,
+            "observation": "B pick attack sounds harsher", "alternative_explanation":
+            "Harder picking in B", "listen_for": "Softer attack without losing clarity",
+        }],
         "uncertainties": ["Different performance"],
         "confidence": 0.6,
     }
@@ -407,4 +418,5 @@ def test_band_with_energy_in_one_clip_still_gets_hint():
     high = 0.1 * np.sin(2 * np.pi * 3000 * t)
     result = compare(clip(low), clip(low + high))
     assert result["deltas_b_minus_a"]["band_evidence"]["2000_5000"] == "sufficient"
-    assert any("2-5 kHz" in hint for hint in result["eq_direction_hints"])
+    assert any(h["band_label"] == "2-5 kHz" and h["direction"] == "cut"
+               for h in result["eq_direction_hints"])
