@@ -45,3 +45,28 @@ def test_known_variants(tmp_path):
     )
     assert retry.returncode != 0
     assert "Refusing to overwrite" in retry.stderr
+
+
+def test_cli_builds_manifest_dataset(tmp_path):
+    import json
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "make_validation_set.py"
+    command = [
+        sys.executable, str(script), "--output", str(tmp_path), "--seconds", "1",
+        "--performance", "riff=synthetic", "--performance", "lead=synthetic",
+        "--hold-out", "lead",
+    ]
+    result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
+    summary = json.loads(result.stdout)
+    assert summary["splits"] == {"tuning": ["riff"], "held_out": ["lead"]}
+    assert summary["comparisons"] == 14
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert all(not Path(clip["path"]).is_absolute() for clip in manifest["clips"].values())
+    retry = subprocess.run(command, check=False, capture_output=True, text=True, timeout=60)
+    assert retry.returncode != 0
+    assert "Refusing to overwrite" in retry.stderr
+    bad = subprocess.run(
+        [*command[:4], "--seconds", "1", "--hold-out", "lead"],
+        check=False, capture_output=True, text=True, timeout=60,
+    )
+    assert "--hold-out requires --performance" in bad.stderr

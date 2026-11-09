@@ -152,3 +152,153 @@ def test_credentials_reject_public_permissions(tmp_path):
     path.chmod(0o644)
     with pytest.raises(ValueError, match="0600"):
         load_credentials(path)
+
+
+def build_manifest(tmp_path):
+    from scripts.make_validation_set import build_dataset
+
+    build_dataset(tmp_path, {"take1": None, "take2": None}, {"take2"}, seconds=1)
+    return tmp_path / "manifest.json"
+
+
+def edit_manifest(path, change):
+    data = json.loads(path.read_text())
+    change(data)
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_dataset_manifest_holds_out_whole_performances(tmp_path):
+    from scripts.eval_listening import load_manifest, manifest_judgments
+
+    manifest = load_manifest(build_manifest(tmp_path))
+    assert manifest["splits"] == {"tuning": ["take1"], "held_out": ["take2"]}
+    assert len(manifest["clips"]) == 18
+    assert {comparison["task"] for comparison in manifest["comparisons"]} == {
+        "eq", "drive", "ambience", "level_control", "silence_control"
+    }
+    held = manifest_judgments(manifest, "held_out", 2)
+    assert len(held) == 7 * 2 * 2
+    assert all(comparison["a"].startswith("take2/") for comparison, _, _ in held)
+    padded = load_audio(manifest["clips"]["take1/padded"]["path"])
+    reference = load_audio(manifest["clips"]["take1/reference"]["path"])
+    assert padded.duration == pytest.approx(reference.duration + 3, abs=1e-3)
+    assert gated_power(padded)[0] == pytest.approx(gated_power(reference)[0], rel=0.05)
+
+
+@pytest.mark.parametrize(("change", "message"), [
+    (lambda data: data["splits"].update(held_out=["take1", "take2"]), "both"),
+    (lambda data: data["splits"].pop("held_out"), "not assigned"),
+    (lambda data: data["comparisons"][0].update(b="take2/eq_bright"), "different splits"),
+    (lambda data: data["comparisons"][0].update(axis="louder"), "axis"),
+    (lambda data: data["comparisons"][0].update(expected="different"), "expected"),
+    (lambda data: data["comparisons"][1].update(id=data["comparisons"][0]["id"]), "unique"),
+    (lambda data: data["comparisons"][0].update(b="missing"), "two different clips"),
+    (lambda data: data["clips"]["take1/reference"].update(path="nope.wav"), "does not exist"),
+    (lambda data: data.update(version=2), "version 1"),
+])
+def test_manifest_validation(tmp_path, change, message):
+    from scripts.eval_listening import load_manifest
+
+    with pytest.raises(ValueError, match=message):
+        load_manifest(edit_manifest(build_manifest(tmp_path), change))
+
+
+def test_manifest_youtube_reference_only_as_a(tmp_path):
+    from scripts.eval_listening import load_manifest, manifest_judgments
+
+    def add_youtube(data):
+        data["clips"]["take1/yt"] = {
+            "youtube": {"url": "https://youtu.be/9hE5-98ZeCg", "start": 1, "end": 5},
+            "performance": "take1",
+        }
+        data["comparisons"].append({
+            "id": "yt", "a": "take1/yt", "b": "take1/reference", "task": "visual_bias",
+            "axis": "brighter", "expected": "similar", "bias_group": "same-audio",
+        })
+
+    path = edit_manifest(build_manifest(tmp_path), add_youtube)
+    manifest = load_manifest(path)
+    assert manifest["clips"]["take1/yt"]["youtube"]["url"].endswith("v=9hE5-98ZeCg")
+    youtube = [item for item in manifest_judgments(manifest, "tuning", 1) if item[0]["id"] == "yt"]
+    assert [swapped for _, _, swapped in youtube] == [False]
+    edit_manifest(path, lambda data: data["comparisons"][-1].update(a="take1/reference", b="take1/yt"))
+    with pytest.raises(ValueError, match="only reference A"):
+        load_manifest(path)
+
+
+def test_manifest_scoring_by_task_order_abstention_and_bias():
+    from scripts.eval_listening import manifest_prediction, score_manifest
+
+    assert manifest_prediction({"brighter": "A"}, "brighter", True) == "B"
+    assert manifest_prediction({"brighter": "B"}, "brighter", False) == "B"
+
+    def row(comparison, task, expected, prediction, swapped=False, repeat=0, bias=None):
+        return {"comparison": comparison, "task": task, "expected": expected,
+                "prediction": prediction, "swapped": swapped, "repeat": repeat,
+                "performance": "take1", "bias_group": bias}
+
+    result = score_manifest([
+        row("eq", "eq", "B", "B"), row("eq", "eq", "B", "B", swapped=True),
+        row("amb", "ambience", "B", "uncertain"), row("amb", "ambience", "B", "B", swapped=True),
+        row("none", "no_guitar", "uncertain", "uncertain"),
+        row("yt1", "visual", "similar", "similar", bias="g"),
+        row("yt2", "visual", "similar", "A", bias="g"),
+        row("down", "eq", "A", None),
+    ])
+    assert result["judgments"] == 8
+    assert result["correct"] == 5
+    assert result["unavailable"] == 1
+    assert result["abstentions"] == 2
+    assert result["abstention_rate"] == pytest.approx(2 / 7)
+    assert (result["order_consistent"], result["order_pairs"]) == (1, 2)
+    assert (result["bias_groups_consistent"], result["bias_groups"]) == (0, 1)
+    assert result["by_task"]["eq"] == {
+        "correct": 2, "total": 3, "accuracy": pytest.approx(2 / 3), "abstentions": 0,
+        "abstention_rate": 0, "comparisons": 2, "performances": 1,
+    }
+    assert result["by_task"]["no_guitar"]["accuracy"] == 1
+    assert result["sample_counts"] == {"judgments": 8, "comparisons": 6, "performances": 1}
+
+
+def test_mocked_manifest_run_maps_swaps_and_disables_cache(tmp_path, monkeypatch):
+    path = build_manifest(tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("TONE_LISTENER_CACHE_ENTRIES", "64")
+    calls = []
+
+    def compare(a, b):
+        import os
+
+        assert os.environ["TONE_LISTENER_CACHE_ENTRIES"] == "0"
+        assert a.source == b.source == "blind"
+        assert gated_power(a)[0] == pytest.approx(gated_power(b)[0], rel=1e-4)
+        calls.append((a, b))
+        # Always call the second-presented clip brighter: correct only in one order.
+        payload = {axis: "similar" for axis in (
+            "brighter", "more_saturated", "more_compressed", "more_ambient"
+        )}
+        return {"listening": {**payload, "brighter": "B"}, "listening_unavailable": None}
+
+    monkeypatch.setattr("scripts.eval_listening.listen_comparison", compare)
+    report = evaluate(["tuning"], repeats=1, pause=0, manifest_path=path)
+    import os
+
+    assert os.environ["TONE_LISTENER_CACHE_ENTRIES"] == "64"
+    assert report["status"] == "complete"
+    assert report["mode"] == "manifest"
+    assert report["max_requests"] == 14 == len(calls)
+    scores = report["splits"]["tuning"]["scores"]
+    assert scores["by_task"]["eq"]["total"] == 4
+    assert scores["by_task"]["eq"]["correct"] == 2
+    assert scores["order_consistency"] == pytest.approx(5 / 7)
+    assert scores["by_task"]["silence_control"]["correct"] == 0
+
+
+def test_manifest_skip_reports_budget_without_calls(tmp_path):
+    report = evaluate(["tuning", "held_out"], repeats=1, manifest_path=build_manifest(tmp_path))
+    assert report["status"] == "skipped"
+    assert report["max_requests"] == 28
+    assert report["manifest"]["sha256"]
+    with pytest.raises(ValueError, match="repeats"):
+        evaluate(["tuning"], repeats=0, manifest_path=tmp_path / "manifest.json")
