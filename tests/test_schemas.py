@@ -121,3 +121,30 @@ def test_analyze_schemas(monkeypatch):
     )
     assert listened.listening is not None
     assert undeclared(listened) == []
+
+
+def test_youtube_reference_comparison_without_key():
+    from tone_listener_mcp.comparison import YouTubeReference, compare_reference
+    from tone_listener_mcp.schemas import CompareYouTubeResponse
+
+    result = compare_reference(YouTubeReference("https://youtu.be/9hE5-98ZeCg", 1, 5), clip(tone()))
+    parsed = CompareYouTubeResponse.model_validate(result)
+    assert undeclared(parsed) == []
+    assert parsed.available_analyses.rms_matching is False
+    assert parsed.available_analyses.spectral_deltas is False
+    assert parsed.available_analyses.semantic_listening is True
+    assert parsed.input_transport == "youtube_url+files"
+    assert parsed.reference.url == "https://www.youtube.com/watch?v=9hE5-98ZeCg"
+    assert parsed.listening_unavailable
+    assert parsed.metrics_b.level.rms_dbfs is not None
+    assert "loudness_match" not in result and "deltas_b_minus_a" not in result
+
+
+def test_local_reference_reports_all_analyses():
+    from tone_listener_mcp.comparison import compare_reference
+
+    result = compare_reference(clip(tone()), clip(0.5 * tone()))
+    assert result["available_analyses"] == {
+        "semantic_listening": True, "rms_matching": True, "spectral_deltas": True
+    }
+    assert result["loudness_match"]["applied"]

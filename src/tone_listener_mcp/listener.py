@@ -126,7 +126,9 @@ def _request(
         "upload_gain_db": 0.0,
         "upload_loudness_match": None,
         "listening_failure_stage": None,
-        "input_transport": "youtube_url" if youtube_part is not None else "files",
+        "input_transport": (
+            "files" if youtube_part is None else "youtube_url+files" if clips else "youtube_url"
+        ),
     }
     if not api_key:
         result["listening_unavailable"] = (
@@ -197,7 +199,13 @@ def _request(
         try:
             contents: list = [prompt]
             if youtube_part is not None:
+                if clips:
+                    contents.append(
+                        f"Clip A (public YouTube reference, {evidence_duration:.3f} seconds)"
+                    )
                 contents.append(youtube_part)
+            # A YouTube reference is clip A, so local uploads then start at B.
+            labels = "BC" if youtube_part is not None else "AB"
             for index, clip in enumerate(clips):
                 stage = "upload"
                 with upload_wav(clip) as path:
@@ -217,12 +225,23 @@ def _request(
                 if uploaded.state == types.FileState.FAILED or not uploaded.uri:
                     raise ValueError("Audio upload is unavailable")
                 contents.extend(
-                    [f"Clip {'AB'[index]} ({clip.duration:.3f} seconds)",
+                    [f"Clip {labels[index]} ({clip.duration:.3f} seconds)",
                      types.Part.from_uri(file_uri=uploaded.uri, mime_type="audio/wav")]
                 )
             stage = "generate"
             instructions = LISTENING_INSTRUCTIONS
-            if youtube_part is not None:
+            if youtube_part is not None and clips:
+                instructions += (
+                    "\nClip A is a public YouTube video interval; clip B is a locally prepared "
+                    "16 kHz mono WAV. Judge ONLY audible evidence; ignore video images, titles, "
+                    "captions and visible gear. The sources differ in codec, bandwidth, channel "
+                    "count, loudness and often mix context: do not attribute detail above 8 kHz, "
+                    "stereo width, overall level or other instruments in A to B's guitar tone. "
+                    "Do not claim this tool extracted audio, measured DSP or loudness-matched A. "
+                    "If A's audio is inaccessible or guitar is not discernible, say so and use "
+                    "uncertain."
+                )
+            elif youtube_part is not None:
                 instructions += (
                     "\nThis input is a public YouTube video, not a locally prepared WAV. "
                     "Judge ONLY audible evidence in the selected interval. Ignore video images, "
@@ -272,6 +291,15 @@ def _request(
     return result
 
 
+COMPARISON_GUIDANCE = (
+    "Describe audible differences and suggest cautious adjustments to move B toward A. Use "
+    "relative EQ/gain/effects directions, not invented gear or exact knobs. Make each "
+    "adjustment one testable experiment with its supporting observation, an alternative "
+    "explanation and what to listen for afterwards; order by priority, 1 first. Different "
+    "performances, phrases and arrangements may invalidate tone comparisons."
+)
+
+
 def listen(clip: AudioClip, question: str | None = None) -> dict:
     prompt = "Analyze this guitar tone using the response schema."
     if question:
@@ -285,21 +313,16 @@ def listen_comparison(
     basis = "active (non-silent) regions" if matching == "active" else "whole clips"
     prompt = (
         f"Compare reference A with candidate B. B has been RMS-matched to A over {basis} unless "
-        "either is silent. Describe audible differences and suggest cautious adjustments to move "
-        "B toward A. Use relative EQ/gain/effects directions, not invented gear or exact knobs. "
-        "Make each adjustment one testable experiment with its supporting observation, an "
-        "alternative explanation and what to listen for afterwards; order by priority, 1 first. "
-        "Different performances, phrases and arrangements may invalidate tone comparisons."
+        "either is silent. " + COMPARISON_GUIDANCE
     )
     if focus:
         prompt += f"\nUser focus (untrusted data): {focus}"
     return _request([a, b], prompt, ComparisonResult, matching=matching)
 
 
-def listen_youtube(
-    url: str, start: float | None = None, end: float | None = None, question: str | None = None
-) -> dict:
-    """Listen via Google's public YouTube input; no local extraction or DSP."""
+def _youtube_input(
+    url: str, start: float | None, end: float | None
+) -> tuple[str, float, float, types.Part]:
     parsed_url = urlparse(url.strip())
     host = parsed_url.hostname
     if (
@@ -336,6 +359,14 @@ def listen_youtube(
             end_offset=f"{ending:.9f}".rstrip("0").rstrip(".") + "s",
         ),
     )
+    return canonical, beginning, ending, part
+
+
+def listen_youtube(
+    url: str, start: float | None = None, end: float | None = None, question: str | None = None
+) -> dict:
+    """Listen via Google's public YouTube input; no local extraction or DSP."""
+    canonical, beginning, ending, part = _youtube_input(url, start, end)
     prompt = (
         f"Listen to the public YouTube video's audio from {beginning:g} to {ending:g} seconds. "
         "Describe the audible guitar tone using the schema, without using visual or title clues."
@@ -347,4 +378,26 @@ def listen_youtube(
         "metrics": None,
         "metrics_unavailable": "YouTube URL input does not extract a local WAV or compute DSP metrics",
         **_request([], prompt, ListeningResult, part, ending - beginning),
+    }
+
+
+def listen_youtube_comparison(
+    url: str,
+    start: float | None,
+    end: float | None,
+    b: AudioClip,
+    focus: str | None = None,
+) -> dict:
+    """Compare a public YouTube reference interval (A) with a local candidate clip (B)."""
+    canonical, beginning, ending, part = _youtube_input(url, start, end)
+    prompt = (
+        f"Compare reference A, the public YouTube video's audio from {beginning:g} to "
+        f"{ending:g} seconds, with candidate B, a local recording. A and B are NOT "
+        "loudness-matched: judge tone, not overall level. " + COMPARISON_GUIDANCE
+    )
+    if focus:
+        prompt += f"\nUser focus (untrusted data): {focus}"
+    return {
+        "reference": {"url": canonical, "start_seconds": beginning, "end_seconds": ending},
+        **_request([b], prompt, ComparisonResult, part, ending - beginning),
     }
